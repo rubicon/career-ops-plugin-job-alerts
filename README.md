@@ -50,15 +50,30 @@ plugins:
 
 ## Configuration and setup
 
-Setup and the required environment variables are documented in
-[skill.md](skill.md) as the adapters land. In outline:
+Pick a mailbox with the `source` setting (`gmail` or `ms365`) in the job-alerts
+block shown above. The environment variables required depend on that choice. The
+ingest hook validates them first, before any mailbox work, and fails with an error
+that names the source, every missing key, and where to set it.
+
+| Source  | Required environment variables                                  |
+| ------- | --------------------------------------------------------------- |
+| `gmail` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` |
+| `ms365` | `MSGRAPH_CLIENT_ID`, `MSGRAPH_REFRESH_TOKEN`                    |
+
+Optional for either source, never required (the feature degrades when absent):
+
+| Variable            | Enables                                           |
+| ------------------- | ------------------------------------------------- |
+| `ANTHROPIC_API_KEY` | LLM extraction (falls back to regex when absent). |
+| `TAVILY_API_KEY`    | Tier 2 canonical-search resolution.               |
+
+How to obtain the credentials is documented in [skill.md](skill.md) and expanded as
+each adapter lands. In outline:
 
 - **Gmail**: a Google Cloud OAuth desktop client and a `gmail.readonly` refresh
   token.
 - **Microsoft 365**: an Azure AD public client and a delegated `Mail.Read` refresh
   token (no client secret).
-- **Optional**: `ANTHROPIC_API_KEY` for LLM extraction and `TAVILY_API_KEY` for the
-  canonical-search fallback. Both degrade gracefully when absent.
 
 The plugin reads standard environment variables only. It never references a secret
 manager.
@@ -67,7 +82,7 @@ manager.
 
 ```bash
 npm install        # dev tooling only (Prettier, commitlint)
-npm test           # zero-network smoke test
+npm test           # zero-network test suite (smoke + unit)
 npm run format:check
 ```
 
