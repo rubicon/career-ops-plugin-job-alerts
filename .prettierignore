@@ -1,0 +1,9 @@
+node_modules/
+package-lock.json
+
+# release-please rewrites these on each release PR and reserializes JSON in a
+# form Prettier reformats. Ignore them so the release PR never trips
+# format:check.
+CHANGELOG.md
+.release-please-manifest.json
+manifest.json
