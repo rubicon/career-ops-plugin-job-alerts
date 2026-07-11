@@ -11,11 +11,16 @@
 //  - Secrets come from ctx.env (declared in manifest.requiredEnv); non-secret
 //    settings come from ctx.settings (the user's config/plugins.yml block).
 //
-// This is the scaffold entry. Real behavior (source-adapter seam, DMARC gate,
-// extraction, canonical resolution) is built per the issues in this repo.
+// This entry stays thin: it delegates to lib/ingest.mjs, which selects the mail
+// source (source-adapter seam), validates its env fail-fast, and runs the
+// source-agnostic core (DMARC gate, extraction, canonical resolution) to return
+// Job[]. The Gmail and Microsoft 365 network adapters are stubs until their own
+// issues land.
+
+import { runIngest } from './lib/ingest.mjs';
 
 export default {
   async ingest(ctx) {
-    return [];
+    return runIngest(ctx);
   },
 };

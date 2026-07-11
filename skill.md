@@ -31,13 +31,45 @@ filtered to marketing leadership.
 
 ## Settings
 
-TODO: non-secret options under `plugins.job-alerts` in `config/plugins.yml`
-(these arrive as `ctx.settings`), including the mail `source` selector
-(`gmail` or `ms365`). Documented as the adapters land.
+Set these under `plugins.job-alerts` in `config/plugins.yml`; they arrive as
+`ctx.settings`:
+
+| Setting     | Values             | Default | Meaning                        |
+| ----------- | ------------------ | ------- | ------------------------------ |
+| `source`    | `gmail` or `ms365` | (none)  | Which mailbox adapter to use.  |
+| `sinceDays` | positive integer   | `14`    | How far back to read messages. |
+
+`source` is required; a missing or unknown value fails with a clear error that
+lists the known sources.
+
+## Required environment variables
+
+Secrets come from the environment (`ctx.env`), and the required set depends on the
+selected `source`. The ingest hook validates the selected source's keys first,
+before any mailbox work, and fails with an error naming the source, every missing
+key, and telling you to set it in `.env`. `manifest.requiredEnv` stays empty
+because the requirement is source-dependent, not fixed.
+
+| Source  | Required environment variables                                  |
+| ------- | --------------------------------------------------------------- |
+| `gmail` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` |
+| `ms365` | `MSGRAPH_CLIENT_ID`, `MSGRAPH_REFRESH_TOKEN`                    |
+
+Optional for either source (never required; the feature degrades when absent):
+
+| Variable            | Enables                                           |
+| ------------------- | ------------------------------------------------- |
+| `ANTHROPIC_API_KEY` | LLM extraction (falls back to regex when absent). |
+| `TAVILY_API_KEY`    | Tier 2 canonical-search resolution.               |
 
 ## Setup
 
-TODO: Gmail (Google Cloud OAuth desktop client, `gmail.readonly`) and Microsoft 365
-(Azure AD public client, delegated `Mail.Read`) one-time setup, plus optional
-`ANTHROPIC_API_KEY` (LLM extraction) and `TAVILY_API_KEY` (canonical search).
-Documented as the adapters and resolver land.
+Obtaining the credentials above (documented fully as each adapter lands):
+
+- Gmail: a Google Cloud OAuth desktop client with `gmail.readonly`, exchanged for a
+  refresh token.
+- Microsoft 365: an Azure AD public client with delegated `Mail.Read`, exchanged for
+  a refresh token (no client secret).
+
+The plugin reads standard environment variables only. It never references `op://` or
+any secret manager.
