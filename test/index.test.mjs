@@ -68,9 +68,28 @@ t('KNOWN_SOURCES is exactly gmail and ms365', () => {
 t('gmail: all keys present passes', () => {
   assert.doesNotThrow(() => validateSourceEnv('gmail', GMAIL_ENV));
 });
-t('gmail: optional keys are never required', () => {
-  // No ANTHROPIC_API_KEY / TAVILY_API_KEY, but the source keys are present.
-  assert.doesNotThrow(() => validateSourceEnv('gmail', { ...GMAIL_ENV }));
+t('optional keys ANTHROPIC_API_KEY / TAVILY_API_KEY are never required', () => {
+  // Absent: a valid source env with neither optional key still passes. If the impl
+  // treated them as required this assertion would throw.
+  assert.doesNotThrow(() =>
+    validateSourceEnv('gmail', {
+      GMAIL_CLIENT_ID: 'id',
+      GMAIL_CLIENT_SECRET: 'secret',
+      GMAIL_REFRESH_TOKEN: 'refresh',
+    }),
+  );
+  // Present with junk values: still passes; they are not gates on validation.
+  assert.doesNotThrow(() =>
+    validateSourceEnv('gmail', {
+      ...GMAIL_ENV,
+      ANTHROPIC_API_KEY: 'junk-not-a-real-key',
+      TAVILY_API_KEY: 'junk-not-a-real-key',
+    }),
+  );
+  // Same for ms365: optional keys absent, validation still passes.
+  assert.doesNotThrow(() =>
+    validateSourceEnv('ms365', { MSGRAPH_CLIENT_ID: 'id', MSGRAPH_REFRESH_TOKEN: 'refresh' }),
+  );
 });
 t('gmail: all keys missing names the source, every key, and .env', () => {
   assert.throws(
@@ -210,6 +229,16 @@ t('dedup collapses www and trailing-slash variants of the same url', () => {
   ]);
   assert.equal(out.length, 2);
 });
+t('dedup keeps redirects that share host+path but differ only in query', () => {
+  // Two distinct job postings behind the same tracking endpoint. Dropping either
+  // would lose a real job, so both must survive; the exact-duplicate collapses.
+  const out = dedup([
+    { url: 'https://click.indeed.com/redirect?jk=AAA' },
+    { url: 'https://click.indeed.com/redirect?jk=BBB' },
+    { url: 'https://click.indeed.com/redirect?jk=AAA' },
+  ]);
+  assert.equal(out.length, 2, 'jk=AAA and jk=BBB both kept; the duplicate jk=AAA collapses');
+});
 
 // -- stage: append (Job[] assembly) ---------------------------------------
 t('buildJobs shapes leads and drops those missing title or url', () => {
@@ -279,6 +308,26 @@ await ta('runIngest honors an explicit sinceDays setting', async () => {
   await runIngest(ctx, { createSource: () => fake });
   assert.equal(fake.lastSinceDays, 30);
 });
+
+// Pin today's behavior so the known limitation cannot silently widen before #7.
+// Invariant (#7): buildJobs must never emit a Job whose url has status !==
+// 'canonical' (a dead tracking link). Until #7 lands canonical resolution, the
+// skeleton emits no jobs at all, so it emits zero dead links.
+await ta(
+  'runIngest emits zero jobs today, so zero dead tracking links (#7 invariant)',
+  async () => {
+    // An empty mailbox yields no jobs.
+    const fake = createFakeSource([]);
+    const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV };
+    const jobs = await runIngest(ctx, { createSource: () => fake });
+    assert.deepEqual(jobs, [], 'no messages means no jobs and no dead links');
+
+    // The real gmail/ms365 stub adapters cannot emit anything today: their
+    // listMessages throws not-implemented, so no live path can produce a job.
+    await assert.rejects(() => createSource('gmail', {}).listMessages(14), /not implemented/);
+    await assert.rejects(() => createSource('ms365', {}).listMessages(14), /not implemented/);
+  },
+);
 
 console.log(`index.test: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

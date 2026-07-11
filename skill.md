@@ -19,8 +19,8 @@ the pipeline. It never submits anything; it only produces leads you review.
 
 ## How to run it
 
-- `node plugins.mjs run job-alerts ingest` — runs the ingest hook.
-- `node plugins.mjs run job-alerts ingest --dry-run` — report what it would write.
+- `node plugins.mjs run job-alerts ingest` runs the ingest hook.
+- `node plugins.mjs run job-alerts ingest --dry-run` reports what it would write.
 
 ## What it produces
 
