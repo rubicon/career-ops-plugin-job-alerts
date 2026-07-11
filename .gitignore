@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Local env and secrets
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# Worktrees (one per issue branch)
+worktrees/
+
+# Agent scaffolding and local build context
+.remember/
+.claude/settings.local.json
+HANDOFF.md
+
+# OS and editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

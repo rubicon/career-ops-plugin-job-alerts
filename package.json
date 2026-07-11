@@ -1,0 +1,38 @@
+{
+  "name": "career-ops-plugin-job-alerts",
+  "version": "0.1.0",
+  "description": "Multi-board job-alert email ingest from Gmail or Microsoft 365. Verifies sender authenticity (DMARC), extracts roles, and resolves tracking links to canonical job URLs (ATS and search).",
+  "license": "MIT",
+  "author": "Dax Davis <dax@rubicontv.com>",
+  "homepage": "https://github.com/rubicon/career-ops-plugin-job-alerts#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rubicon/career-ops-plugin-job-alerts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rubicon/career-ops-plugin-job-alerts/issues"
+  },
+  "keywords": [
+    "career-ops",
+    "career-ops-plugin",
+    "job-alerts",
+    "ingest",
+    "gmail",
+    "microsoft-365",
+    "job-search"
+  ],
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node test/smoke.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.6.1",
+    "@commitlint/config-conventional": "^19.6.0",
+    "prettier": "^3.4.2"
+  }
+}
