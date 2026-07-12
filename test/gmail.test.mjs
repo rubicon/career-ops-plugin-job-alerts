@@ -38,7 +38,7 @@ function toB64Url(str) {
 // Build a fake fetch/ctx. `routes` maps a URL-substring to a response spec (or a
 // function producing one, given the call index for that route). Every call is
 // recorded so request shape can be asserted.
-function makeCtx({ env = GMAIL_ENV, settings = {}, routes }) {
+function makeCtx({ env = GMAIL_ENV, settings = {}, routes, logs }) {
   const calls = [];
   const routeCounts = {};
   async function fetchImpl(url, options = {}) {
@@ -48,18 +48,28 @@ function makeCtx({ env = GMAIL_ENV, settings = {}, routes }) {
         const n = routeCounts[key] ?? 0;
         routeCounts[key] = n + 1;
         const spec = typeof routes[key] === 'function' ? routes[key](n) : routes[key];
-        return makeResponse(spec);
+        return respond(spec);
       }
     }
     throw new Error(`no fake route for ${url}`);
   }
-  return { env, settings, fetch: fetchImpl, calls };
+  const log = (...args) => {
+    if (logs) logs.push(args.join(' '));
+  };
+  return { env, settings, fetch: fetchImpl, calls, log };
 }
 
-function makeResponse({ ok = true, status = 200, json = undefined, text = undefined }) {
+// Mirror the engine's guardedFetch contract: throw on any non-2xx (an Error with a
+// .status property and an `HTTP <status>: <snippet>` message), and return a
+// Response-like object (only json()/text(), the surface the adapter uses) on 2xx.
+function respond({ ok = true, status = 200, json = undefined, text = undefined }) {
+  if (!ok) {
+    const snippet = (text ?? (json === undefined ? '' : JSON.stringify(json))).slice(0, 300);
+    const err = new Error(snippet ? `HTTP ${status}: ${snippet}` : `HTTP ${status}`);
+    err.status = status;
+    throw err;
+  }
   return {
-    ok,
-    status,
     async json() {
       return json;
     },
@@ -284,8 +294,12 @@ await ta('a runaway pageToken loop is capped with a clear error', async () => {
   );
 });
 
-// -- error paths ----------------------------------------------------------
-await ta('a non-ok token response throws a clear error', async () => {
+// -- error paths (the engine's ctx.fetch throws on non-2xx) ---------------
+// The engine's guardedFetch rejects on any non-2xx response with an Error whose
+// message is `HTTP <status>: <snippet>` and whose .status is the code. The adapter
+// never sees a Response with ok === false, so a failed token exchange or
+// messages.list simply propagates that rejection; the fake mirrors that contract.
+await ta('a failed token exchange (non-2xx) rejects with the HTTP status', async () => {
   const ctx = makeCtx({
     routes: {
       [TOKEN_URL]: { ok: false, status: 400, text: 'invalid_grant' },
@@ -294,14 +308,14 @@ await ta('a non-ok token response throws a clear error', async () => {
   await assert.rejects(
     () => create(ctx).listMessages(14),
     (err) => {
-      assert.match(err.message, /token/i);
+      assert.equal(err.status, 400);
       assert.match(err.message, /400/);
       return true;
     },
   );
 });
 
-await ta('a token response without access_token throws a clear error', async () => {
+await ta('a 2xx token response without access_token throws the adapter error', async () => {
   const ctx = makeCtx({
     routes: { [TOKEN_URL]: { json: { token_type: 'Bearer' } } },
   });
@@ -314,7 +328,7 @@ await ta('a token response without access_token throws a clear error', async () 
   );
 });
 
-await ta('a non-ok messages.list response throws a clear error', async () => {
+await ta('a failed messages.list (non-2xx) rejects with the HTTP status', async () => {
   const ctx = makeCtx({
     routes: {
       [TOKEN_URL]: tokenOk(),
@@ -324,28 +338,44 @@ await ta('a non-ok messages.list response throws a clear error', async () => {
   await assert.rejects(
     () => create(ctx).listMessages(14),
     (err) => {
-      assert.match(err.message, /list/i);
+      assert.equal(err.status, 500);
       assert.match(err.message, /500/);
       return true;
     },
   );
 });
 
-await ta('a non-ok messages.get response throws a clear error naming the id', async () => {
+// Per-message resilience: one unreadable message is skipped and logged, not fatal.
+await ta('a message that fails to fetch is skipped and logged; others survive', async () => {
+  const logs = [];
   const ctx = makeCtx({
+    logs,
     routes: {
       [TOKEN_URL]: tokenOk(),
-      [`${LIST_PATH}/bad`]: { ok: false, status: 404, text: 'not found' },
-      [LIST_PATH]: { json: { messages: [{ id: 'bad' }] } },
+      [`${LIST_PATH}/good1`]: getFixture('good1'),
+      [`${LIST_PATH}/bad`]: { ok: false, status: 500, text: 'boom' },
+      [`${LIST_PATH}/good2`]: getFixture('good2'),
+      [LIST_PATH]: { json: { messages: [{ id: 'good1' }, { id: 'bad' }, { id: 'good2' }] } },
     },
   });
-  await assert.rejects(
-    () => create(ctx).listMessages(14),
-    (err) => {
-      assert.match(err.message, /bad/);
-      assert.match(err.message, /404/);
-      return true;
-    },
+  const recs = await create(ctx).listMessages(14);
+  assert.deepEqual(
+    recs.map((r) => r.id).sort(),
+    ['good1', 'good2'],
+    'the two readable messages are returned',
+  );
+  assert.equal(
+    recs.some((r) => r.id === 'bad'),
+    false,
+    'the unreadable message is absent, not a null/partial record',
+  );
+  assert.ok(
+    logs.some((l) => l.includes('bad') && /skip/i.test(l)),
+    'the skip is logged and names the message id',
+  );
+  assert.ok(
+    logs.some((l) => /skipped 1 of 3/.test(l)),
+    'a one-line summary count is logged',
   );
 });
 

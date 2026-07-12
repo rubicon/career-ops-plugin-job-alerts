@@ -34,13 +34,19 @@ filtered to marketing leadership.
 Set these under `plugins.job-alerts` in `config/plugins.yml`; they arrive as
 `ctx.settings`:
 
-| Setting     | Values             | Default | Meaning                        |
-| ----------- | ------------------ | ------- | ------------------------------ |
-| `source`    | `gmail` or `ms365` | (none)  | Which mailbox adapter to use.  |
-| `sinceDays` | positive integer   | `14`    | How far back to read messages. |
+| Setting      | Values                   | Default | Meaning                                            |
+| ------------ | ------------------------ | ------- | -------------------------------------------------- |
+| `source`     | `gmail` or `ms365`       | (none)  | Which mailbox adapter to use.                      |
+| `sinceDays`  | positive integer         | `14`    | How far back to read messages.                     |
+| `sender`     | string or list of string | (none)  | Optional. Restrict to one or more `from:` senders. |
+| `maxResults` | positive integer         | `100`   | Gmail only. Page size for the message list.        |
+| `maxPages`   | positive integer         | `25`    | Gmail only. Page cap; exceeding it fails loud.     |
 
 `source` is required; a missing or unknown value fails with a clear error that
-lists the known sources.
+lists the known sources. `sender` narrows the search to specific alert addresses:
+give a single address, or a list (matched as any-of). `maxResults` and `maxPages`
+tune Gmail paging; the full window is read across pages, and hitting `maxPages`
+raises a clear error rather than silently under-reading.
 
 ## Required environment variables
 
