@@ -26,7 +26,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test/smoke.mjs && node test/index.test.mjs",
+    "test": "node test/smoke.mjs && node test/index.test.mjs && node test/gmail.test.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
