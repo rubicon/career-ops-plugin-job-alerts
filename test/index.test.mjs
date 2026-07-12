@@ -322,9 +322,10 @@ await ta(
     const jobs = await runIngest(ctx, { createSource: () => fake });
     assert.deepEqual(jobs, [], 'no messages means no jobs and no dead links');
 
-    // The real gmail/ms365 stub adapters cannot emit anything today: their
-    // listMessages throws not-implemented, so no live path can produce a job.
-    await assert.rejects(() => createSource('gmail', {}).listMessages(14), /not implemented/);
+    // gmail is implemented (#6) but with an empty ctx it has no ctx.fetch and no
+    // credentials, so it cannot reach the network; ms365 remains a not-implemented
+    // stub. Neither can produce a live job in this hermetic test.
+    await assert.rejects(() => createSource('gmail', {}).listMessages(14), /ctx\.fetch/);
     await assert.rejects(() => createSource('ms365', {}).listMessages(14), /not implemented/);
   },
 );
