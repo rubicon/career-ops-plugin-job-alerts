@@ -9,18 +9,17 @@ career-ops-plugin-job-alerts is a [career-ops](https://github.com/santifer/caree
 plugin with the `ingest` hook. It reads job-alert emails from Gmail or Microsoft
 365, verifies sender authenticity (DMARC), extracts marketing-leadership roles, and
 resolves board tracking links to the employer's canonical posting before returning
-`Job[]` to the pipeline. See `ARCHITECTURE.md` (once written) for layout and data
-flow.
+`Job[]` to the pipeline. See `ARCHITECTURE.md` for layout and data flow.
 
 ## Governing policies (read before acting)
 
 These are the maintainer's machine-local policies. Read the ones relevant to your
 task in the session that acts on them; do not work from a remembered summary.
 
-- `~/.claude/CLAUDE.md` — global preferences.
-- `~/.claude/policies/general-repository-process-policy.md` — repo mechanics.
-- `~/.claude/policies/software-engineering-practices-policy.md` — engineering craft.
-- `~/.claude/policies/agent-orchestration-and-verification-policy.md` — coordination
+- `~/.claude/CLAUDE.md`: global preferences.
+- `~/.claude/policies/general-repository-process-policy.md`: repo mechanics.
+- `~/.claude/policies/software-engineering-practices-policy.md`: engineering craft.
+- `~/.claude/policies/agent-orchestration-and-verification-policy.md`: coordination
   and verification.
 
 ## Non-negotiable governance gates (bind every agent and subagent)

@@ -1,0 +1,41 @@
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    name: Propose release
+    runs-on: ubuntu-latest
+    steps:
+      # App credentials come from 1Password at runtime (single source of truth in
+      # the Automation vault). Only OP_SERVICE_ACCOUNT_TOKEN lives as a repo secret;
+      # the app id + private key never leave 1Password.
+      - name: Load app credentials from 1Password
+        id: op
+        uses: 1password/load-secrets-action@3a12b0ab99d9cd590a3e9b5a90ea017210ed9556 # v4.0.1
+        with:
+          export-env: false
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          RELEASE_PLEASE_APP_ID: 'op://Automation/rubicon-release-please-private-key/app id'
+          RELEASE_PLEASE_APP_KEY: 'op://Automation/rubicon-release-please-private-key/private key'
+
+      - name: Mint app token
+        uses: actions/create-github-app-token@5d869da34e18e7287c1daad50e0b8ea0f506ce69 # v1.11.0
+        id: app-token
+        with:
+          app-id: ${{ steps.op.outputs.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ steps.op.outputs.RELEASE_PLEASE_APP_KEY }}
+
+      - name: Run release-please
+        uses: googleapis/release-please-action@5792afc6b46e9bb55deda9eda973a18c226bc3fc # v4.1.5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
