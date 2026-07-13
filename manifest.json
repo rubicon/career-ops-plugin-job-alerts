@@ -6,7 +6,13 @@
   "description": "Multi-board job-alert email ingest from Gmail or Microsoft 365. Verifies sender authenticity (DMARC), extracts roles, and resolves tracking links to canonical job URLs (ATS and search).",
   "hooks": ["ingest"],
   "requiredEnv": [],
-  "allowedHosts": ["oauth2.googleapis.com", "gmail.googleapis.com"],
+  "allowedHosts": [
+    "oauth2.googleapis.com",
+    "gmail.googleapis.com",
+    "boards-api.greenhouse.io",
+    "api.lever.co",
+    "api.ashbyhq.com"
+  ],
   "skill": "skill.md",
   "humanInTheLoop": true,
   "homepage": "https://github.com/rubicon/career-ops-plugin-job-alerts"
