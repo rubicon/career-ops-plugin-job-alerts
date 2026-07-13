@@ -241,15 +241,28 @@ t('dedup keeps redirects that share host+path but differ only in query', () => {
 });
 
 // -- stage: append (Job[] assembly) ---------------------------------------
-t('buildJobs shapes leads and drops those missing title or url', () => {
+t('buildJobs shapes resolved leads and drops those missing title or url', () => {
   const jobs = buildJobs([
-    { title: 'CMO', url: 'https://x/1', company: 'Acme', location: 'Remote' },
-    { title: '', url: 'https://x/2' },
-    { title: 'VP', url: '' },
+    { title: 'CMO', url: 'https://x/1', company: 'Acme', location: 'Remote', canonical: true },
+    { title: '', url: 'https://x/2', canonical: true },
+    { title: 'VP', url: '', canonical: true },
   ]);
   assert.deepEqual(jobs, [
     { title: 'CMO', url: 'https://x/1', company: 'Acme', location: 'Remote' },
   ]);
+});
+t('buildJobs never emits an unresolved lead still pointing at its tracker (#8)', () => {
+  // A needs-canonical lead that reached buildJobs without a canonical URL or a
+  // search fallback still carries its raw tracker; it must be dropped, not leaked.
+  const jobs = buildJobs([
+    { title: 'VP Marketing', url: 'https://click.indeed.com/redirect?jk=AAA', canonical: false },
+    { title: 'VP Marketing', url: 'https://www.google.com/search?q=x', searchFallback: true },
+    { title: 'CMO', url: 'https://boards.greenhouse.io/acme/jobs/9', canonical: true },
+  ]);
+  assert.equal(jobs.length, 2, 'only the search-fallback and canonical leads are emitted');
+  for (const job of jobs) {
+    assert.doesNotMatch(job.url, /indeed\.com/, 'the tracker url is never emitted');
+  }
 });
 
 // -- ingest wiring against the fake in-memory MailSource ------------------
@@ -309,20 +322,47 @@ await ta('runIngest honors an explicit sinceDays setting', async () => {
   assert.equal(fake.lastSinceDays, 30);
 });
 
-// Pin today's behavior so the known limitation cannot silently widen before #7.
-// Invariant (#7): buildJobs must never emit a Job whose url has status !==
-// 'canonical' (a dead tracking link). Until #7 lands canonical resolution, the
-// skeleton emits no jobs at all, so it emits zero dead links.
+// Enforce the never-dead-link contract (#8) through the whole pipeline: a lead
+// behind a non-ATS tracking link is emitted with a LIVE search-URL fallback, never
+// the tracker. Extraction does not yet produce a company, so the ATS probe finds no
+// slug and the lead falls back without any network call, which keeps this hermetic.
 await ta(
-  'runIngest emits zero jobs today, so zero dead tracking links (#7 invariant)',
+  'runIngest emits a live search fallback for a tracker lead, never the tracker (#8)',
   async () => {
-    // An empty mailbox yields no jobs.
+    const fake = createFakeSource([
+      {
+        id: 'a',
+        subject: 'VP Marketing at Acme',
+        from: 'alerts@indeed.com',
+        headers: { 'authentication-results': 'mx; dmarc=pass' },
+        body: 'Apply: https://click.indeed.com/redirect?jk=XYZ',
+      },
+    ]);
+    const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV };
+    const jobs = await runIngest(ctx, { createSource: () => fake });
+    assert.equal(jobs.length, 1, 'the authenticated lead is preserved for the human');
+    assert.doesNotMatch(
+      jobs[0].url,
+      /click\.indeed\.com/,
+      'the dead tracking link is never emitted',
+    );
+    assert.match(
+      jobs[0].url,
+      /^https:\/\/www\.google\.com\/search\?q=/,
+      'a live search URL replaces it',
+    );
+  },
+);
+
+await ta(
+  'runIngest emits zero jobs for an empty mailbox, and the adapters stay guarded',
+  async () => {
     const fake = createFakeSource([]);
     const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV };
     const jobs = await runIngest(ctx, { createSource: () => fake });
-    assert.deepEqual(jobs, [], 'no messages means no jobs and no dead links');
+    assert.deepEqual(jobs, [], 'no messages means no jobs');
 
-    // gmail is implemented (#6) but with an empty ctx it has no ctx.fetch and no
+    // gmail is implemented (#7) but with an empty ctx it has no ctx.fetch and no
     // credentials, so it cannot reach the network; ms365 remains a not-implemented
     // stub. Neither can produce a live job in this hermetic test.
     await assert.rejects(() => createSource('gmail', {}).listMessages(14), /ctx\.fetch/);
