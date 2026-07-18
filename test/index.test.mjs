@@ -360,12 +360,13 @@ await ta('runIngest enriches leads via the LLM when ANTHROPIC_API_KEY is present
 });
 
 await ta(
-  'runIngest produces baseline-only results end to end with no ANTHROPIC_API_KEY',
+  'runIngest calls enrichLeads for the no-key path and its unchanged return value flows to Job[]',
   async () => {
-    // Uses the REAL default enrichLeads (no deps override): this is an end-to-end
-    // wiring check, not a re-test of enrichLeads' own no-key-skip logic (already
-    // proven directly against the real module in test/extract-llm.test.mjs, the
-    // one place that can assert ctx.fetchJson is never even attempted).
+    // A spy stands in for deps.enrichLeads (the same seam the LLM-enrichment test
+    // above overrides) and returns its `leads` argument unchanged, simulating the
+    // real no-key short-circuit in lib/extract-llm.mjs. This proves runIngest
+    // actually dispatches through the enrichLeads call site for the no-key path,
+    // not just that the pipeline produces the right output regardless of wiring.
     const fake = createFakeSource([
       {
         id: 'a',
@@ -376,9 +377,29 @@ await ta(
       },
     ]);
     const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV };
-    const jobs = await runIngest(ctx, { createSource: () => fake });
-    assert.equal(jobs[0].title, 'VP Marketing');
-    assert.equal(jobs[0].company, 'Acme');
+    const calls = [];
+    const enrichLeads = async (spyCtx, message, leads, breaker) => {
+      calls.push({ ctx: spyCtx, message, leads, breaker });
+      return leads;
+    };
+    const jobs = await runIngest(ctx, { createSource: () => fake, enrichLeads });
+    assert.equal(calls.length, 1, 'enrichLeads is called once for the one authenticated message');
+    assert.equal(calls[0].ctx, ctx, 'ctx is passed through unchanged');
+    assert.equal(calls[0].message.id, 'a', 'the authenticated message is passed through');
+    assert.deepEqual(
+      calls[0].leads,
+      extractLeads(calls[0].message),
+      'the leads argument is exactly what extractLeads produces for this message',
+    );
+    assert.equal(typeof calls[0].breaker, 'object', 'a shared breaker object is passed through');
+    assert.deepEqual(jobs, [
+      {
+        title: 'VP Marketing',
+        url: 'https://boards.greenhouse.io/acme/jobs/123',
+        company: 'Acme',
+        location: '',
+      },
+    ]);
   },
 );
 
