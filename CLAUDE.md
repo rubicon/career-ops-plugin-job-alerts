@@ -7,9 +7,11 @@ repository. `AGENTS.md` is a pointer to this file.
 
 career-ops-plugin-job-alerts is a [career-ops](https://github.com/santifer/career-ops)
 plugin with the `ingest` hook. It reads job-alert emails from Gmail or Microsoft
-365, verifies sender authenticity (DMARC), extracts marketing-leadership roles, and
+365, verifies sender authenticity (DMARC), extracts every posting it finds, and
 resolves board tracking links to the employer's canonical posting before returning
-`Job[]` to the pipeline. See `ARCHITECTURE.md` for layout and data flow.
+`Job[]` to the pipeline. The plugin does not filter by role: the alert
+subscription itself and career-ops's own downstream pipeline evaluate already do
+that job. See `ARCHITECTURE.md` for layout and data flow.
 
 ## Governing policies (read before acting)
 

@@ -13,9 +13,11 @@ license: MIT
 ## What it does
 
 Reads job-alert emails from a Gmail or Microsoft 365 mailbox, verifies the sender
-is authentic (DMARC fail-closed), extracts marketing-leadership roles, and resolves
+is authentic (DMARC fail-closed), extracts every posting it finds, and resolves
 board tracking links to the employer's canonical posting before returning them to
-the pipeline. It never submits anything; it only produces leads you review.
+the pipeline. It never submits anything; it only produces leads you review. It
+does not filter by role: your alert subscription and career-ops's own downstream
+pipeline evaluate already do that.
 
 ## How to run it
 
@@ -26,8 +28,10 @@ the pipeline. It never submits anything; it only produces leads you review.
 
 `Job[]` where each job is `{ title, url, company, location }`. `url` is the
 resolved canonical posting when resolution succeeds; a lead that cannot be resolved
-is flagged `needs-canonical` rather than kept as a dead tracking link. Roles are
-filtered to marketing leadership.
+gets a live search-URL fallback rather than a dead tracking link. Title and
+company come from a small LLM call when `ANTHROPIC_API_KEY` is set, or from
+deterministic subject-line parsing otherwise; every posting found is returned,
+with no role filter of its own.
 
 ## Settings
 
