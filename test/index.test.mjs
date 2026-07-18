@@ -184,15 +184,57 @@ t('dmarc missing header fails closed', () => {
 });
 
 // -- stage: extract -------------------------------------------------------
-t('extract pulls each link and pairs it with the subject', () => {
+t('extract parses "{Role} at {Company}" and pairs it with every link', () => {
   const leads = extractLeads({
     subject: 'VP Marketing at Acme',
     body: 'See https://boards.greenhouse.io/acme/jobs/1 and https://jobs.lever.co/acme/2',
   });
   assert.equal(leads.length, 2);
-  assert.equal(leads[0].title, 'VP Marketing at Acme');
+  assert.equal(leads[0].title, 'VP Marketing');
+  assert.equal(leads[0].company, 'Acme');
   assert.equal(leads[0].url, 'https://boards.greenhouse.io/acme/jobs/1');
   assert.equal(leads[1].url, 'https://jobs.lever.co/acme/2');
+  assert.equal(leads[1].company, 'Acme');
+});
+t('extract strips a known alert prefix before matching "at"', () => {
+  const leads = extractLeads({
+    subject: 'Job Alert: Senior PM at Globex',
+    body: 'https://boards.greenhouse.io/globex/jobs/9',
+  });
+  assert.equal(leads[0].title, 'Senior PM');
+  assert.equal(leads[0].company, 'Globex');
+});
+t('extract truncates at a trailing " - " segment before matching "at"', () => {
+  const leads = extractLeads({
+    subject: 'VP Marketing at Acme - View job',
+    body: 'https://boards.greenhouse.io/acme/jobs/1',
+  });
+  assert.equal(leads[0].title, 'VP Marketing');
+  assert.equal(leads[0].company, 'Acme');
+});
+t('extract parses "{Company} is hiring a {Role}"', () => {
+  const leads = extractLeads({
+    subject: 'Globex is hiring a Senior Engineer',
+    body: 'https://boards.greenhouse.io/globex/jobs/2',
+  });
+  assert.equal(leads[0].title, 'Senior Engineer');
+  assert.equal(leads[0].company, 'Globex');
+});
+t('extract parses "N new {Role} jobs"', () => {
+  const leads = extractLeads({
+    subject: '3 new HR Coordinator jobs',
+    body: 'https://boards.greenhouse.io/acme/jobs/3',
+  });
+  assert.equal(leads[0].title, 'HR Coordinator');
+  assert.equal(leads[0].company, '');
+});
+t('extract falls back to the raw subject when no pattern matches', () => {
+  const leads = extractLeads({
+    subject: 'Weekly Digest',
+    body: 'https://boards.greenhouse.io/acme/jobs/4',
+  });
+  assert.equal(leads[0].title, 'Weekly Digest');
+  assert.equal(leads[0].company, '');
 });
 t('extract with no links returns nothing', () => {
   assert.deepEqual(extractLeads({ subject: 'x', body: 'no links here' }), []);
@@ -287,9 +329,9 @@ await ta('runIngest wires the selected source through the core to Job[]', async 
   const jobs = await runIngest(ctx, { createSource: () => fake });
   assert.equal(jobs.length, 1, 'only the DMARC-authenticated message yields a job');
   assert.deepEqual(jobs[0], {
-    title: 'VP Marketing at Acme',
+    title: 'VP Marketing',
     url: 'https://boards.greenhouse.io/acme/jobs/123',
-    company: '',
+    company: 'Acme',
     location: '',
   });
   assert.equal(fake.lastSinceDays, 14, 'default window of 14 days is passed to the source');
@@ -324,8 +366,9 @@ await ta('runIngest honors an explicit sinceDays setting', async () => {
 
 // Enforce the never-dead-link contract (#8) through the whole pipeline: a lead
 // behind a non-ATS tracking link is emitted with a LIVE search-URL fallback, never
-// the tracker. Extraction does not yet produce a company, so the ATS probe finds no
-// slug and the lead falls back without any network call, which keeps this hermetic.
+// the tracker. This fake ctx has no ctx.fetchJson, so the ATS probe's attempt
+// throws and is caught as a miss (lib/resolve-network.mjs's generic catch), which
+// keeps this hermetic regardless of whether extraction derived a company.
 await ta(
   'runIngest emits a live search fallback for a tracker lead, never the tracker (#8)',
   async () => {
