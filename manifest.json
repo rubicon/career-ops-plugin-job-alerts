@@ -11,7 +11,8 @@
     "gmail.googleapis.com",
     "boards-api.greenhouse.io",
     "api.lever.co",
-    "api.ashbyhq.com"
+    "api.ashbyhq.com",
+    "api.anthropic.com"
   ],
   "skill": "skill.md",
   "humanInTheLoop": true,

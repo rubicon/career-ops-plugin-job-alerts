@@ -337,6 +337,51 @@ await ta('runIngest wires the selected source through the core to Job[]', async 
   assert.equal(fake.lastSinceDays, 14, 'default window of 14 days is passed to the source');
 });
 
+await ta('runIngest enriches leads via the LLM when ANTHROPIC_API_KEY is present', async () => {
+  const fake = createFakeSource([
+    {
+      id: 'a',
+      subject: 'VP Marketing at Acme',
+      from: 'alerts@indeed.com',
+      headers: { 'authentication-results': 'mx; dmarc=pass' },
+      body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
+    },
+  ]);
+  const ctx = {
+    settings: { source: 'gmail' },
+    env: { ...GMAIL_ENV, ANTHROPIC_API_KEY: 'test-key' },
+  };
+  const enrichLeads = async (_ctx, _message, leads) =>
+    leads.map((lead) => ({ ...lead, title: 'VP of Marketing', location: 'Remote' }));
+  const jobs = await runIngest(ctx, { createSource: () => fake, enrichLeads });
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].title, 'VP of Marketing');
+  assert.equal(jobs[0].location, 'Remote');
+});
+
+await ta(
+  'runIngest produces baseline-only results end to end with no ANTHROPIC_API_KEY',
+  async () => {
+    // Uses the REAL default enrichLeads (no deps override): this is an end-to-end
+    // wiring check, not a re-test of enrichLeads' own no-key-skip logic (already
+    // proven directly against the real module in test/extract-llm.test.mjs, the
+    // one place that can assert ctx.fetchJson is never even attempted).
+    const fake = createFakeSource([
+      {
+        id: 'a',
+        subject: 'VP Marketing at Acme',
+        from: 'alerts@indeed.com',
+        headers: { 'authentication-results': 'mx; dmarc=pass' },
+        body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
+      },
+    ]);
+    const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV };
+    const jobs = await runIngest(ctx, { createSource: () => fake });
+    assert.equal(jobs[0].title, 'VP Marketing');
+    assert.equal(jobs[0].company, 'Acme');
+  },
+);
+
 await ta('runIngest fails fast on missing env before constructing the source', async () => {
   let constructed = false;
   const ctx = { settings: { source: 'gmail' }, env: {} };
