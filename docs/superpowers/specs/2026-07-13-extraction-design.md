@@ -8,7 +8,7 @@ baseline that already exists.
 ## Problem
 
 Today's `lib/extract.mjs` finds every URL in a message body via regex, correct
-and deterministic, but gives every URL in the message the *same* title (the raw
+and deterministic, but gives every URL in the message the _same_ title (the raw
 email subject) and blank `company`/`location`. For a multi-posting digest email
 ("3 new jobs for you"), this is right for at most one lead and wrong for the
 rest. This issue makes those fields real: a per-URL regex baseline plus an
@@ -53,7 +53,7 @@ Mirrors the pure-classifier / I/O-resolver split already established in issue
   also parse the subject line into `{title, company}` using patterns ported
   from `Schlaflied/career-ops-plugin-linkedin-alerts`'s `parseSubject` (credit
   in the file header): `"{Role} at {Company}"`, `"{Company} is hiring a
-  {Role}"`, `"N new {Role} jobs"`. This baseline is unconditional: it always
+{Role}"`, `"N new {Role} jobs"`. This baseline is unconditional: it always
   runs, costs no network call, and is what a user without `ANTHROPIC_API_KEY`
   gets.
 - **`lib/extract-llm.mjs` (new, I/O, conditional on `ANTHROPIC_API_KEY` being
@@ -80,7 +80,7 @@ conditional, per message) -> `normalize` -> `classify` -> `resolveNetwork` ->
   invented): `POST https://api.anthropic.com/v1/messages` via
   `ctx.fetchJson`, headers `anthropic-version: 2023-06-01` and
   `x-api-key: <ANTHROPIC_API_KEY>`, body `{ model, max_tokens, system,
-  messages: [{ role: 'user', content }] }`. Add `api.anthropic.com` to
+messages: [{ role: 'user', content }] }`. Add `api.anthropic.com` to
   `manifest.allowedHosts`.
 - **System prompt** requires the model to return ONLY a JSON array, scoped
   strictly to the provided URL list, with an explicit instruction never to
