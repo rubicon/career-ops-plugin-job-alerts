@@ -24,8 +24,11 @@ destination.
   deferred, since a raw socket does not fit the HTTPS-only plugin sandbox).
 - **Verifies sender authenticity** with a DMARC fail-closed gate, so spoofed or
   unauthenticated mail is skipped.
-- **Extracts** marketing-leadership roles. Primary path is LLM extraction via the
-  Anthropic API; without a key it falls back to regex and subject-line parsing.
+- **Extracts** every posting it finds, with no role filter of its own: the alert
+  subscription and career-ops's own downstream pipeline evaluate already narrow
+  what you see. Primary path is a small LLM call (`claude-haiku-4-5-20251001`)
+  per authenticated email via the Anthropic API; without a key, or if a call
+  fails, it falls back to deterministic subject-line and regex parsing.
 - **Resolves canonical URLs** in two tiers: known ATS boards (Greenhouse, Lever,
   Ashby) by public API, then a search fallback via Tavily, else `needs-canonical`.
 - Returns `Job[]` (`title`, `url`, `company`, `location`). It is human-in-the-loop
