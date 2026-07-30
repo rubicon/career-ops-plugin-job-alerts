@@ -16,6 +16,12 @@ jobs:
       # App credentials come from 1Password at runtime (single source of truth in
       # the Automation vault). Only OP_SERVICE_ACCOUNT_TOKEN lives as a repo secret;
       # the app id + private key never leave 1Password.
+      #
+      # The item is addressed by its UUID, not its title. Titles are mutable: this
+      # reference previously read "rubicon-release-please-private-key" and every
+      # release run started failing the moment the item was renamed. A UUID cannot
+      # drift that way. It identifies the rubicon-release-please GitHub App key and
+      # is an address, not a secret.
       - name: Load app credentials from 1Password
         id: op
         uses: 1password/load-secrets-action@3a12b0ab99d9cd590a3e9b5a90ea017210ed9556 # v4.0.1
@@ -23,8 +29,8 @@ jobs:
           export-env: false
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          RELEASE_PLEASE_APP_ID: 'op://Automation/rubicon-release-please-private-key/app id'
-          RELEASE_PLEASE_APP_KEY: 'op://Automation/rubicon-release-please-private-key/private key'
+          RELEASE_PLEASE_APP_ID: 'op://Automation/lnacky4l2tmlihrockbutkub7y/app id'
+          RELEASE_PLEASE_APP_KEY: 'op://Automation/lnacky4l2tmlihrockbutkub7y/private key'
 
       - name: Mint app token
         uses: actions/create-github-app-token@5d869da34e18e7287c1daad50e0b8ea0f506ce69 # v1.11.0
