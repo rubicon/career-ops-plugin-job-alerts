@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.0...v0.1.0) (2026-08-03)
+
+
+### Bug Fixes
+
+* **ci:** address the release-please 1Password item by UUID ([#15](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/15)) ([c188ab9](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/c188ab94e5f37a0bd5da50d4260d8d8532de65e0)), closes [#14](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/14)
+
 ## 0.1.0 (2026-07-21)
 
 
