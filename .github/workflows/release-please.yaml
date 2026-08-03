@@ -27,6 +27,7 @@ jobs:
         uses: 1password/load-secrets-action@3a12b0ab99d9cd590a3e9b5a90ea017210ed9556 # v4.0.1
         with:
           export-env: false
+          version: 2.35.0
         env:
           OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
           RELEASE_PLEASE_APP_ID: 'op://Automation/lnacky4l2tmlihrockbutkub7y/app id'
