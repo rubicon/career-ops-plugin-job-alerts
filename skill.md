@@ -38,19 +38,23 @@ with no role filter of its own.
 Set these under `plugins.job-alerts` in `config/plugins.yml`; they arrive as
 `ctx.settings`:
 
-| Setting      | Values                   | Default | Meaning                                            |
-| ------------ | ------------------------ | ------- | -------------------------------------------------- |
-| `source`     | `gmail` or `ms365`       | (none)  | Which mailbox adapter to use.                      |
-| `sinceDays`  | positive integer         | `14`    | How far back to read messages.                     |
-| `sender`     | string or list of string | (none)  | Optional. Restrict to one or more `from:` senders. |
-| `maxResults` | positive integer         | `100`   | Gmail only. Page size for the message list.        |
-| `maxPages`   | positive integer         | `25`    | Gmail only. Page cap; exceeding it fails loud.     |
+| Setting      | Values                   | Default  | Meaning                                            |
+| ------------ | ------------------------ | -------- | -------------------------------------------------- |
+| `source`     | `gmail` or `ms365`       | (none)   | Which mailbox adapter to use.                      |
+| `sinceDays`  | positive integer         | `14`     | How far back to read messages.                     |
+| `sender`     | string or list of string | (none)   | Optional. Restrict to one or more `from:` senders. |
+| `maxResults` | positive integer         | `100`    | Page size for the message list.                    |
+| `maxPages`   | positive integer         | `25`     | Page cap; exceeding it fails loud.                 |
+| `tenant`     | string                   | `common` | `ms365` only. Azure AD tenant for the token grant. |
 
 `source` is required; a missing or unknown value fails with a clear error that
 lists the known sources. `sender` narrows the search to specific alert addresses:
 give a single address, or a list (matched as any-of). `maxResults` and `maxPages`
-tune Gmail paging; the full window is read across pages, and hitting `maxPages`
-raises a clear error rather than silently under-reading.
+tune paging for either adapter; the full window is read across pages, and hitting
+`maxPages` raises a clear error rather than silently under-reading. On `ms365`,
+`maxResults` is clamped to the 1-1000 page size Microsoft Graph documents for the
+messages endpoint. `tenant` accepts `common`, `organizations`, `consumers`, or a
+tenant id; leave it unset for a personal outlook.com mailbox.
 
 ## Required environment variables
 

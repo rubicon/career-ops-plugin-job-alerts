@@ -471,11 +471,11 @@ await ta(
     const jobs = await runIngest(ctx, { createSource: () => fake });
     assert.deepEqual(jobs, [], 'no messages means no jobs');
 
-    // gmail is implemented (#7) but with an empty ctx it has no ctx.fetch and no
-    // credentials, so it cannot reach the network; ms365 remains a not-implemented
-    // stub. Neither can produce a live job in this hermetic test.
+    // Both adapters are implemented, but with an empty ctx neither has ctx.fetch
+    // or credentials, so neither can reach the network or produce a live job in
+    // this hermetic test.
     await assert.rejects(() => createSource('gmail', {}).listMessages(14), /ctx\.fetch/);
-    await assert.rejects(() => createSource('ms365', {}).listMessages(14), /not implemented/);
+    await assert.rejects(() => createSource('ms365', {}).listMessages(14), /ctx\.fetch/);
   },
 );
 

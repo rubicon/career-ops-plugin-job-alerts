@@ -24,8 +24,8 @@ career-ops-plugin-job-alerts/
     append.mjs             # Job[] assembly (pure)
     sources/
       registry.mjs         # MailSource registry + per-source env validation
-      gmail.mjs            # Gmail adapter (stub, lands in its own issue)
-      ms365.mjs            # Microsoft 365 adapter (stub, lands in its own issue)
+      gmail.mjs            # Gmail adapter (OAuth REST over the Gmail API)
+      ms365.mjs            # Microsoft 365 adapter (OAuth REST over Microsoft Graph)
   test/
     smoke.mjs              # zero-network smoke test (manifest/exports parity)
     index.test.mjs         # ingest wiring tests against a fake in-memory source
@@ -42,9 +42,13 @@ logic evolve independently.
    `listMessages(sinceDays) -> Promise<Array<{ id, subject, from, headers, body }>>`
    and an optional `archive(id)`. `registry.mjs` maps a `source` setting to an
    adapter, and validates that adapter's declared `requiredEnv` before any adapter
-   is constructed, so the hook fails fast with one actionable error. v1 ships the
-   Gmail and Microsoft 365 adapters as stubs; their network implementations land in
-   their own issues.
+   is constructed, so the hook fails fast with one actionable error. v1 ships a
+   Gmail adapter (OAuth REST over the Gmail API) and a Microsoft 365 adapter
+   (OAuth REST over Microsoft Graph). Both list message ids for the window, then
+   fetch each message individually, so one unreadable message is skipped and
+   logged instead of losing the whole window, and both hand the core the same
+   `{ id, subject, from, headers, body }` record with headers flattened to a
+   plain-object map for the DMARC gate.
 2. **The source-agnostic core** (the per-stage modules directly under `lib/`) only
    ever sees `{ subject, headers, body }`. It knows nothing about which provider a
    message came from.

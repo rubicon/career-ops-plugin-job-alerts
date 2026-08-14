@@ -96,7 +96,9 @@ This plugin reuses ideas and code, under MIT, from:
 - [`Schlaflied/career-ops-plugin-linkedin-alerts`](https://github.com/Schlaflied/career-ops-plugin-linkedin-alerts)
   for OAuth-REST Gmail access and LinkedIn ID normalization.
 - [`Schlaflied/career-ops-plugin-outlook-interviews`](https://github.com/Schlaflied/career-ops-plugin-outlook-interviews)
-  for the Microsoft Graph token-refresh and message-listing skeleton.
+  @ `ac70c74` for the Microsoft Graph token-refresh and message-listing skeleton,
+  widened here to select the full body and `internetMessageHeaders` and to
+  paginate `@odata.nextLink`.
 - The bundled career-ops `gmail` plugin for the DMARC authenticity check.
 
 ## License
