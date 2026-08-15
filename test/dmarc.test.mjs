@@ -153,6 +153,47 @@ t('a property of another method is not a dmarc result', () => {
   );
 });
 
+// -- the parse is discriminated, not merely reachable ----------------------
+// The cases above all place a genuine dmarc=fail ahead of the decoy, so the
+// boundary's real verdict decides them whether or not the free-text and
+// anchoring rules do any work. These four put the decoy's own ';' or '.' where
+// it changes which token the parser reads as the DMARC methodspec, ahead of a
+// genuine dmarc=pass. Remove the comment and quoted-string stripping, or the
+// methodspec anchor, and each of them starts reading a second, conflicting
+// dmarc result out of text that asserts nothing, so the boundary's own pass
+// becomes unresolvable and these assertions fail.
+t('a semicolon inside a quoted string does not open a new methodspec', () => {
+  assert.equal(
+    passesDmarc(
+      msg('mx.google.com; spf=fail reason="checked; dmarc=fail applies"; dmarc=pass'),
+      GOOGLE,
+    ),
+    true,
+  );
+});
+t('a semicolon inside a comment does not open a new methodspec', () => {
+  assert.equal(
+    passesDmarc(msg('mx.google.com; spf=fail (checked; dmarc=fail applies); dmarc=pass'), GOOGLE),
+    true,
+  );
+});
+t('a semicolon inside a nested comment does not open a new methodspec either', () => {
+  assert.equal(
+    passesDmarc(
+      msg('mx.google.com; spf=fail (outer (checked; dmarc=fail) tail); dmarc=pass'),
+      GOOGLE,
+    ),
+    true,
+  );
+});
+t('a propspec whose property is named dmarc is not a dmarc methodspec', () => {
+  // RFC 7601 propspecs are `ptype "." property "=" pvalue`, so `policy.dmarc=`
+  // states a property of the policy ptype, not DMARC's own result. Anchoring
+  // the methodspec at the start of its own part is what tells them apart: the
+  // part does not begin with `method=`, so it asserts no result at all.
+  assert.equal(passesDmarc(msg('mx.google.com; policy.dmarc=fail; dmarc=pass'), GOOGLE), true);
+});
+
 // -- only the receiving boundary's own field counts ------------------------
 t('an authserv-id is compared whole, never by substring', () => {
   assert.equal(passesDmarc(msg('mx.google.com.evil.tld; dmarc=pass'), GOOGLE), false);
