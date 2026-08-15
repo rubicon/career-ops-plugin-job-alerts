@@ -308,9 +308,20 @@ t('resolve-canonical marks an employer tenant platform canonical (#22)', () => {
   }
 });
 t('resolve-canonical keeps a lookalike tenant-platform domain needs-canonical', () => {
-  const r = resolveCanonical({ url: 'https://myworkdayjobs.com.mirror.example/acme/job/1' });
-  assert.equal(r.canonical, false);
-  assert.equal(r.status, 'needs-canonical');
+  // The `$` anchor on the family pattern is what keeps a mirror out. The second url
+  // is the one that actually tests it: the first carries no posting id, so once the
+  // family row started requiring one it would be rejected by that requirement even
+  // on a host the anchor was no longer excluding -- a guard passing for someone
+  // else's reason looks exactly like a guard that works.
+  for (const url of [
+    'https://myworkdayjobs.com.mirror.example/acme/job/1',
+    'https://myworkdayjobs.com.mirror.example/en-US/Acme_Careers/job/Dallas-TX/VP-Marketing_JR-10423',
+    'https://icims.com.mirror.example/jobs/44120/vp-marketing/job',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+    assert.equal(r.status, 'needs-canonical', url);
+  }
 });
 t('resolve-canonical keeps a tenant-platform LISTING needs-canonical (#22)', () => {
   // The family row for Workday and iCIMS declares `postingPath: true` precisely

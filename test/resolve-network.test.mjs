@@ -1266,24 +1266,33 @@ await ta('Tier-2 miss: a domain merely similar to the company name is rejected',
   // A board slug only has to be relatable to the company, because it is namespaced
   // inside a vendor whose host is already trusted. A domain label is global:
   // acmetech.com and acmetechnologies.com are different registrations that may be
-  // different owners, so here equality is the bar and containment is not enough.
-  const ctx = makeCtx({
-    env: TAVILY_ENV,
-    routes: {
-      [TAVILY_KEY]: tavilyResponse([
-        {
-          title: 'VP Marketing | Careers at Acme Technologies',
-          url: 'https://careers.acmetech.com/jobs/vp-marketing',
-          content: 'Acme Technologies is hiring a VP Marketing.',
-          score: 0.91,
-          raw_content: null,
-        },
-      ]),
-    },
-  });
-  const [lead] = await resolveNetwork(ctx, [employerLead()]);
-  assert.equal(lead.resolvedVia, 'search-fallback');
-  assert.doesNotMatch(lead.url, /acmetech\.com/);
+  // different owners, so here equality is the bar and containment is not enough --
+  // in EITHER direction. A truncation of the name and a label that swallows the
+  // whole name and adds to it are both separate registrations, and anyone can buy
+  // the second one; testing only the truncation left half the rule unexercised.
+  for (const url of [
+    'https://careers.acmetech.com/jobs/vp-marketing',
+    'https://careers.acmetechnologies-jobs.com/jobs/vp-marketing',
+    'https://acmetechnologiesgroup.com/careers/vp-marketing',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing | Careers at Acme Technologies',
+            url,
+            content: 'Acme Technologies is hiring a VP Marketing.',
+            score: 0.91,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead()]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+    assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'), url);
+  }
 });
 
 await ta('Tier-2 miss: a bespoke careers index is not a posting', async () => {
