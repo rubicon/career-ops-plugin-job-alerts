@@ -896,18 +896,25 @@ await ta('Tier-2 miss: a short company name cannot anchor a containment match', 
 });
 
 await ta('Tier-2 miss: one shared word of a two-word company is not corroboration', async () => {
-  // Northstar Health is a different employer that shares a first word with
-  // Northstar Technologies, and its board slug relates to the company under gate 2.
-  // Only the rule that a multi-token company must match at least TWO of its tokens
-  // separates them; matching "northstar" alone would emit the wrong employer.
+  // Northstar Labs is a different employer boarding under the bare shared word, and
+  // "northstar" IS related to "Northstar Technologies" under gate 2: it is contained
+  // in the full-name form, which is the abbreviation direction the vendor namespace
+  // legitimately buys. Only the rule that a multi-token company must match at least
+  // TWO of its tokens separates them; matching "northstar" alone would emit the wrong
+  // employer.
+  //
+  // The board slug here was "northstar-health" until #24, which relates to the
+  // company only through its first word. Once gate 2 stopped reading truncations it
+  // rejected this input on its own, and the corroboration rule this test names went
+  // unexercised while the test kept passing.
   const ctx = makeCtx({
     env: TAVILY_ENV,
     routes: {
       [TAVILY_KEY]: tavilyResponse([
         {
-          title: 'Job Application for VP Marketing at Northstar Health',
-          url: 'https://boards.greenhouse.io/northstar-health/jobs/5150',
-          content: 'Northstar Health is hiring a VP Marketing to lead brand.',
+          title: 'Job Application for VP Marketing at Northstar Labs',
+          url: 'https://boards.greenhouse.io/northstar/jobs/5150',
+          content: 'Northstar Labs is hiring a VP Marketing to lead brand.',
           score: 0.91,
           raw_content: null,
         },
@@ -921,6 +928,264 @@ await ta('Tier-2 miss: one shared word of a two-word company is not corroboratio
   assert.doesNotMatch(lead.url, /greenhouse\.io/, 'a shared first word is not the same employer');
   assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Northstar Technologies'));
 });
+
+// -- the tenant relation reads the WHOLE company name, never a truncation --
+//
+// `candidateSlugs` offers a bare first-word form so Tier 1 can PROBE a board named
+// after it, where a wrong guess costs a 404. Reading that set in gate 2 admitted a
+// class the containment relation was never meant to cover: the first word is a prefix
+// of the joined form, so it adds nothing in the board-inside-the-name direction, but
+// in the name-inside-the-board direction it is the whole of the evidence. A vendor
+// host proves a URL is SOMEBODY's board; it says nothing about whose (#24).
+
+await ta(
+  'Tier-2 miss: a board slug that only extends the company first word is rejected',
+  async () => {
+    // "nimbusai" relates to "Nimbus Data" through the first word alone: neither
+    // full-name form contains it and it contains neither of them. Every other gate
+    // passes -- both company tokens appear in the OTHER employer's own snippet,
+    // because the second token is an industry word, and the role matches exactly --
+    // so gate 2 is the only thing that can reject it, and another company's board
+    // would otherwise be emitted as this lead's canonical posting.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing | Nimbus AI',
+            url: 'https://boards.greenhouse.io/nimbusai/jobs/7788',
+            content: 'Nimbus AI, a data infrastructure company, is hiring a VP Marketing.',
+            score: 0.9,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [
+      { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
+    ]);
+    assert.equal(lead.resolvedVia, 'search-fallback');
+    assert.doesNotMatch(
+      lead.url,
+      /greenhouse\.io/,
+      "a shared first word is not the employer's board",
+    );
+    assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Nimbus Data'));
+  },
+);
+
+await ta(
+  'Tier-2 miss: a tenant host label that only extends the company first word is rejected',
+  async () => {
+    // The same defect on the other side of gate 2: a per-employer tenant platform
+    // carries the tenant in a host label instead of a path segment, and reads the
+    // same slug set. The posting id is present, so gate 5 cannot be what rejects it.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing | Nimbus AI',
+            url: 'https://nimbusai.wd5.myworkdayjobs.com/en-US/careers/job/Remote/VP-Marketing_JR-10423',
+            content: 'Nimbus AI, a data infrastructure company, is hiring a VP Marketing.',
+            score: 0.9,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [
+      { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
+    ]);
+    assert.equal(lead.resolvedVia, 'search-fallback');
+    assert.doesNotMatch(lead.url, /myworkdayjobs\.com/, 'a shared first word is not the tenant');
+    assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Nimbus Data'));
+  },
+);
+
+await ta(
+  'Tier-2 hit: a board slug that carries the whole company name and adds to it is accepted',
+  async () => {
+    // The name-inside-the-board direction, which the fix keeps. A regional board that
+    // carries the employer's WHOLE name and appends to it is the company's own board
+    // under a longer token, and it is what separates this rule from equality -- which
+    // would send a real posting to the fallback and make the containment relation
+    // dead code in one of its two directions.
+    //
+    // The suffix is deliberately NOT a careers-style word. With "-careers" the
+    // furniture strip reduces the slug to the company name and the other direction
+    // admits it too, so the test would have had two ways to pass and would not have
+    // reddened when this direction was disabled alone.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Job Application for VP Marketing at Acme Technologies',
+            url: 'https://boards.greenhouse.io/acmetechnologies-emea/jobs/7788',
+            content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+            score: 0.88,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+    assert.equal(lead.url, 'https://boards.greenhouse.io/acmetechnologies-emea/jobs/7788');
+    assert.equal(lead.canonical, true);
+    assert.equal(lead.resolvedVia, 'tavily');
+  },
+);
+
+// -- careers-style furniture around a tenant token -------------------------
+//
+// The tenant token is not always the employer's identity on its own: iCIMS's
+// documented tenant host is `careers-{tenant}.icims.com`, and a board slug is as
+// readily written `{tenant}-careers`. That furniture is set aside before the relation
+// is read -- the same labels registrableIdentityLabel already sets aside on a bespoke
+// host -- because otherwise the vendor's own prefix would have to be absorbed by a
+// truncation of the company name, which is the defect this section closes. Both the
+// written form and the stripped core are read, and both directions run below.
+
+await ta(
+  'Tier-2 hit: careers-style furniture around the tenant token is not the employer',
+  async () => {
+    for (const url of [
+      'https://boards.greenhouse.io/acmetech-careers/jobs/7788',
+      'https://boards.greenhouse.io/careers-acmetech/jobs/7788',
+      'https://boards.greenhouse.io/jobs-acmetech-careers/jobs/7788',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'Job Application for VP Marketing at Acme Technologies',
+              url,
+              content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+              score: 0.88,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+      assert.equal(lead.url, url, url);
+      assert.equal(lead.resolvedVia, 'tavily', url);
+    }
+  },
+);
+
+await ta('Tier-2 hit: a company whose own name starts with a careers word keeps it', async () => {
+  // Stripping the furniture must not cost an employer whose NAME carries one of
+  // those words. "Job Corps USA" boards under its whole name plus a suffix, which
+  // relates only to the token as WRITTEN: strip the leading "job" and what is left
+  // ("corpsusa") neither contains the company name nor sits inside it. The written
+  // form is read alongside the stripped core for exactly this case.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Job Corps USA',
+          url: 'https://boards.greenhouse.io/job-corps-usa/jobs/7788',
+          content: 'Job Corps USA is hiring a VP Marketing to lead brand and demand.',
+          score: 0.88,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Job Corps', canonical: false },
+  ]);
+  assert.equal(lead.url, 'https://boards.greenhouse.io/job-corps-usa/jobs/7788');
+  assert.equal(lead.resolvedVia, 'tavily');
+});
+
+await ta(
+  'Tier-2 miss: stripping the furniture does not readmit the rejected direction',
+  async () => {
+    // The strip removes furniture and nothing else, so a token gate 2 rejects in the
+    // name-inside-the-token direction is still rejected once the furniture is off:
+    // "careers-nimbusai" reduces to "nimbusai", which relates to "Nimbus Data" no better
+    // than it did before, in either direction. Run on a shared board and on a tenant
+    // host, because the two read the token out of different places.
+    //
+    // Deliberately NOT claimed here: that the strip cannot reach the OTHER direction. It
+    // can, and the next test says so out loud rather than leaving behind a comment
+    // asserting a safety property no input holds.
+    for (const url of [
+      'https://boards.greenhouse.io/careers-nimbusai/jobs/7788',
+      'https://careers-nimbusai.icims.com/jobs/44120/vp-marketing/job',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'VP Marketing | Nimbus AI',
+              url,
+              content: 'Nimbus AI, a data infrastructure company, is hiring a VP Marketing.',
+              score: 0.9,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [
+        { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
+      ]);
+      assert.equal(lead.resolvedVia, 'search-fallback', url);
+      assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Nimbus Data'), url);
+    }
+  },
+);
+
+await ta(
+  'Tier-2: a tenant token that stops at a word boundary of the company name is STILL accepted',
+  async () => {
+    // The residual this fix does not close, pinned so it is a decision on the record
+    // and not an assumption. "nimbus" sits inside "nimbusdata", so the
+    // token-inside-the-name direction accepts it even when it is Nimbus AI's board --
+    // and "careers-nimbus" reduces to that same token, so the furniture strip inherits
+    // it. Both resolve on origin/main as well; neither is introduced or widened here.
+    //
+    // It is the same family as the truncation #24 removed, seen from the other
+    // direction, and closing it is a separate trade: on a shared board a first-word
+    // slug is what Tier 1 already probes and VERIFIES by fetching the board, while on
+    // a tenant platform there is no probe and rejecting it would lose real postings.
+    // Filed as #29 with this reproduction.
+    //
+    // If #29 closes it, this test SHOULD go red. That is the point of it: the day the
+    // behaviour changes, the change is deliberate and visible rather than silent.
+    for (const url of [
+      'https://boards.greenhouse.io/nimbus/jobs/7788',
+      'https://boards.greenhouse.io/careers-nimbus/jobs/7788',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'Job Application for VP Marketing at Nimbus',
+              url,
+              content:
+                'Nimbus is a data infrastructure company hiring a VP Marketing to lead brand.',
+              score: 0.9,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [
+        { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
+      ]);
+      assert.equal(lead.url, url, url);
+      assert.equal(lead.resolvedVia, 'tavily', url);
+    }
+  },
+);
 
 await ta('a company with no token long enough to corroborate never reaches Tavily', async () => {
   // "3M Co" leaves nothing usable: "co" is legal-entity noise and "3m" is too short
