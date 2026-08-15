@@ -8,6 +8,8 @@ import {
   requiredEnvFor,
   validateSourceEnv,
   createSource,
+  trustedAuthservIdFor,
+  declaredAuthservId,
 } from '../lib/sources/registry.mjs';
 import { passesDmarc } from '../lib/dmarc.mjs';
 import { extractLeads } from '../lib/extract.mjs';
@@ -169,18 +171,48 @@ t('createSource(unknown) throws', () => {
 });
 
 // -- stage: dmarc (fail closed) -------------------------------------------
-t('dmarc pass header passes', () => {
-  assert.equal(passesDmarc({ headers: { 'authentication-results': 'mx; dmarc=pass' } }), true);
+// The gate's own parsing and trust rules are covered in test/dmarc.test.mjs.
+// What matters here is the seam: which authserv-id each source declares as its
+// receiving boundary, and that the gate is reachable with it.
+t('gmail declares the authserv-id its receiving boundary stamps', () => {
+  assert.equal(trustedAuthservIdFor('gmail', {}), 'mx.google.com');
 });
-t('dmarc header casing is ignored', () => {
-  assert.equal(passesDmarc({ headers: { 'Authentication-Results': 'mx; dmarc=PASS' } }), true);
+t('ms365 has no default, so it refuses to run until the setting names one', () => {
+  // Microsoft publishes no authserv-id for Exchange Online, and an unnamed
+  // Authentication-Results field is one any sender can write. Rather than trust
+  // one, or drop every message and look like an empty mailbox, the source
+  // refuses with an error naming the setting that resolves it.
+  assert.throws(() => trustedAuthservIdFor('ms365', {}), /authservId/);
+  assert.throws(() => trustedAuthservIdFor('ms365', {}), /ms365/);
 });
-t('dmarc fail does not pass', () => {
-  assert.equal(passesDmarc({ headers: { 'authentication-results': 'mx; dmarc=fail' } }), false);
+t('an authservId setting overrides the adapter default for either source', () => {
+  const ctx = { settings: { authservId: 'mail.contoso.com' } };
+  assert.equal(trustedAuthservIdFor('ms365', ctx), 'mail.contoso.com');
+  assert.equal(trustedAuthservIdFor('gmail', ctx), 'mail.contoso.com');
 });
-t('dmarc missing header fails closed', () => {
-  assert.equal(passesDmarc({ headers: {} }), false);
-  assert.equal(passesDmarc({}), false);
+t('a blank or whitespace-only authservId setting is not a configured id', () => {
+  assert.equal(trustedAuthservIdFor('gmail', { settings: { authservId: '  ' } }), 'mx.google.com');
+  assert.throws(() => trustedAuthservIdFor('ms365', { settings: { authservId: '  ' } }), /ms365/);
+});
+t('trustedAuthservIdFor rejects an unknown source', () => {
+  assert.throws(() => trustedAuthservIdFor('imap', {}), /imap/);
+});
+t('an adapter that declares no trustedAuthservId is a plugin bug, not a weak default', () => {
+  // The declaration is the seam that tells the gate which field to believe. A
+  // module that omits it, or misspells it, must fail as the plugin bug it is
+  // rather than resolve to anything the gate would act on.
+  assert.throws(() => declaredAuthservId('gmail', {}), /trustedAuthservId/);
+  assert.throws(() => declaredAuthservId('gmail', { trustedAuthservID: 'mx.google.com' }), /gmail/);
+  assert.equal(declaredAuthservId('gmail', { trustedAuthservId: null }), null);
+});
+t('the declared gmail boundary id admits a real verdict and nothing else', () => {
+  const authservId = trustedAuthservIdFor('gmail', {});
+  const gate = (value) =>
+    passesDmarc({ headers: { 'Authentication-Results': value } }, { authservId });
+  assert.equal(gate('mx.google.com; spf=pass; dmarc=pass'), true);
+  assert.equal(gate('mx.google.com; spf=pass; dmarc=fail'), false);
+  assert.equal(gate('evil.tld; dmarc=pass'), false);
+  assert.equal(passesDmarc({ headers: {} }, { authservId }), false);
 });
 
 // -- stage: extract -------------------------------------------------------
@@ -314,18 +346,19 @@ await ta('runIngest wires the selected source through the core to Job[]', async 
       id: 'a',
       subject: 'VP Marketing at Acme',
       from: 'alerts@indeed.com',
-      headers: { 'authentication-results': 'mx; dmarc=pass' },
+      headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=pass' },
       body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
     },
     {
       id: 'b',
       subject: 'Unauthenticated spam',
       from: 'spoof@evil.example',
-      headers: { 'authentication-results': 'mx; dmarc=fail' },
+      headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=fail' },
       body: 'https://evil.example.com/x',
     },
   ]);
-  const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV };
+  const logs = [];
+  const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV, log: (m) => logs.push(m) };
   const jobs = await runIngest(ctx, { createSource: () => fake });
   assert.equal(jobs.length, 1, 'only the DMARC-authenticated message yields a job');
   assert.deepEqual(jobs[0], {
@@ -335,7 +368,104 @@ await ta('runIngest wires the selected source through the core to Job[]', async 
     location: '',
   });
   assert.equal(fake.lastSinceDays, 14, 'default window of 14 days is passed to the source');
+  // A drop must be visible: a fail-closed gate that silently discards every
+  // message is indistinguishable from an empty mailbox otherwise.
+  const dropped = logs.find((m) => /skipped 1 of 2/.test(m));
+  assert.ok(dropped, `the skipped message is logged; got ${JSON.stringify(logs)}`);
+  assert.match(dropped, /mx\.google\.com/, 'the log names the boundary the verdict must come from');
+  assert.match(dropped, /authservId/, 'and points at the setting that changes it');
 });
+
+await ta('runIngest refuses to open the mailbox with no boundary id to trust', async () => {
+  // ms365 has no default authserv-id, so a run with the setting unset cannot
+  // attribute any verdict. That has to stop the run before the mailbox is read:
+  // reading it and then failing every message would spend the network round
+  // trips only to look like an empty inbox.
+  let listed = false;
+  const fake = {
+    async listMessages() {
+      listed = true;
+      return [];
+    },
+  };
+  const ctx = { settings: { source: 'ms365' }, env: MS365_ENV };
+  await assert.rejects(() => runIngest(ctx, { createSource: () => fake }), /authservId/);
+  assert.equal(listed, false, 'the mailbox is never listed');
+});
+
+await ta('runIngest runs ms365 once the authservId setting names the boundary', async () => {
+  const fake = createFakeSource([
+    {
+      id: 'a',
+      subject: 'VP Marketing at Acme',
+      from: 'alerts@indeed.com',
+      headers: { 'authentication-results': ['mail.contoso.com; spf=pass; dmarc=pass'] },
+      body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
+    },
+  ]);
+  const ctx = {
+    settings: { source: 'ms365', authservId: 'mail.contoso.com' },
+    env: MS365_ENV,
+  };
+  const jobs = await runIngest(ctx, { createSource: () => fake });
+  assert.equal(jobs.length, 1);
+});
+
+await ta('runIngest logs nothing about DMARC when every message is authenticated', async () => {
+  const logs = [];
+  const fake = createFakeSource([
+    {
+      id: 'a',
+      subject: 'VP Marketing at Acme',
+      from: 'alerts@indeed.com',
+      headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=pass' },
+      body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
+    },
+  ]);
+  const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV, log: (m) => logs.push(m) };
+  await runIngest(ctx, { createSource: () => fake });
+  assert.deepEqual(
+    logs.filter((m) => /dmarc/i.test(m)),
+    [],
+  );
+});
+
+await ta(
+  "runIngest gates on the selected source's receiving boundary, not on any pass",
+  async () => {
+    // Both messages assert dmarc=pass. Only one of them is attributable to the
+    // boundary the gmail source declares; the other asserts it about itself, and
+    // a repeat cannot speak for the boundary either.
+    const fake = createFakeSource([
+      {
+        id: 'a',
+        subject: 'VP Marketing at Acme',
+        from: 'alerts@indeed.com',
+        headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=pass' },
+        body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
+      },
+      {
+        id: 'b',
+        subject: 'CFO at Globex',
+        from: 'spoof@evil.example',
+        headers: {
+          'authentication-results':
+            'mx.google.com; spf=fail; dmarc=fail\nmx.google.com.evil.tld; dmarc=pass',
+        },
+        body: 'Apply: https://boards.greenhouse.io/globex/jobs/999',
+      },
+    ]);
+    const logs = [];
+    const ctx = { settings: { source: 'gmail' }, env: GMAIL_ENV, log: (m) => logs.push(m) };
+    const jobs = await runIngest(ctx, { createSource: () => fake });
+    assert.equal(jobs.length, 1, 'only the boundary-authenticated message yields a job');
+    assert.equal(jobs[0].company, 'Acme');
+    assert.ok(
+      logs.some((m) => /skipped 1 of 2/.test(m)),
+      'the unattributable message is reported, not silently dropped',
+    );
+  },
+);
 
 await ta('runIngest enriches leads via the LLM when ANTHROPIC_API_KEY is present', async () => {
   const fake = createFakeSource([
@@ -343,7 +473,7 @@ await ta('runIngest enriches leads via the LLM when ANTHROPIC_API_KEY is present
       id: 'a',
       subject: 'VP Marketing at Acme',
       from: 'alerts@indeed.com',
-      headers: { 'authentication-results': 'mx; dmarc=pass' },
+      headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=pass' },
       body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
     },
   ]);
@@ -372,7 +502,7 @@ await ta(
         id: 'a',
         subject: 'VP Marketing at Acme',
         from: 'alerts@indeed.com',
-        headers: { 'authentication-results': 'mx; dmarc=pass' },
+        headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=pass' },
         body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
       },
     ]);
@@ -443,7 +573,7 @@ await ta(
         id: 'a',
         subject: 'VP Marketing at Acme',
         from: 'alerts@indeed.com',
-        headers: { 'authentication-results': 'mx; dmarc=pass' },
+        headers: { 'authentication-results': 'mx.google.com; spf=pass; dmarc=pass' },
         body: 'Apply: https://click.indeed.com/redirect?jk=XYZ',
       },
     ]);
@@ -471,11 +601,11 @@ await ta(
     const jobs = await runIngest(ctx, { createSource: () => fake });
     assert.deepEqual(jobs, [], 'no messages means no jobs');
 
-    // gmail is implemented (#7) but with an empty ctx it has no ctx.fetch and no
-    // credentials, so it cannot reach the network; ms365 remains a not-implemented
-    // stub. Neither can produce a live job in this hermetic test.
+    // Both adapters are implemented, but with an empty ctx neither has ctx.fetch
+    // or credentials, so neither can reach the network or produce a live job in
+    // this hermetic test.
     await assert.rejects(() => createSource('gmail', {}).listMessages(14), /ctx\.fetch/);
-    await assert.rejects(() => createSource('ms365', {}).listMessages(14), /not implemented/);
+    await assert.rejects(() => createSource('ms365', {}).listMessages(14), /ctx\.fetch/);
   },
 );
 

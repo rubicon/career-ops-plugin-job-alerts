@@ -23,7 +23,9 @@ destination.
 - Reads from **Gmail or Microsoft 365** through a source-adapter seam (IMAP is
   deferred, since a raw socket does not fit the HTTPS-only plugin sandbox).
 - **Verifies sender authenticity** with a DMARC fail-closed gate, so spoofed or
-  unauthenticated mail is skipped.
+  unauthenticated mail is skipped. The verdict is taken only from the
+  `Authentication-Results` field your receiving mail boundary stamped (RFC 7601),
+  never from a copy the message arrived carrying.
 - **Extracts** every posting it finds, with no role filter of its own: the alert
   subscription and career-ops's own downstream pipeline evaluate already narrow
   what you see. Primary path is a small LLM call (`claude-haiku-4-5-20251001`)
@@ -63,6 +65,13 @@ that names the source, every missing key, and where to set it.
 | `gmail` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` |
 | `ms365` | `MSGRAPH_CLIENT_ID`, `MSGRAPH_REFRESH_TOKEN`                    |
 
+`ms365` also needs the `authservId` setting: the name your receiving mail
+boundary puts at the front of the `Authentication-Results` header, which is the
+only field the DMARC gate can attribute a verdict to. Microsoft publishes none
+for Exchange Online, so there is no default and the source refuses to run until
+you set it. See [skill.md](skill.md) for how to read it out of a message you
+already have. `gmail` knows its own and needs no setting.
+
 Optional for either source, never required (the feature degrades when absent):
 
 | Variable            | Enables                                           |
@@ -96,7 +105,9 @@ This plugin reuses ideas and code, under MIT, from:
 - [`Schlaflied/career-ops-plugin-linkedin-alerts`](https://github.com/Schlaflied/career-ops-plugin-linkedin-alerts)
   for OAuth-REST Gmail access and LinkedIn ID normalization.
 - [`Schlaflied/career-ops-plugin-outlook-interviews`](https://github.com/Schlaflied/career-ops-plugin-outlook-interviews)
-  for the Microsoft Graph token-refresh and message-listing skeleton.
+  @ `ac70c74` for the Microsoft Graph token-refresh and message-listing skeleton,
+  widened here to select the full body and `internetMessageHeaders` and to
+  paginate `@odata.nextLink`.
 - The bundled career-ops `gmail` plugin for the DMARC authenticity check.
 
 ## License

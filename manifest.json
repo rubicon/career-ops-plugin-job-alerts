@@ -11,6 +11,8 @@
   "allowedHosts": [
     "oauth2.googleapis.com",
     "gmail.googleapis.com",
+    "login.microsoftonline.com",
+    "graph.microsoft.com",
     "boards-api.greenhouse.io",
     "api.lever.co",
     "api.ashbyhq.com",
