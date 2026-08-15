@@ -1902,7 +1902,6 @@ await ta('resolve-canonical reads the same vocabulary the same way on a vendor p
   for (const url of [
     'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/search-results/4400',
     'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/SearchResults/4400',
-    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/browse-marketing/4400',
     'https://careers-acmetech.icims.com/jobs/page-1250',
     'https://careers-acmetech.icims.com/jobs/offset-1250',
     'https://careers-acmetech.icims.com/jobs/all-openings/1250',
@@ -1926,35 +1925,92 @@ await ta('resolve-canonical reads the same vocabulary the same way on a vendor p
   }
 });
 
-await ta('Tier-2 hit: a vocabulary word INSIDE a role name is part of the name', async () => {
+await ta('Tier-2 hit: a role name that carries a vocabulary word is still a role', async () => {
   // The other direction, and the one that keeps this from being a rule that
-  // rejects everything: "Paid Search Manager" is a role, and both verified vendor
-  // grammars put a real role name in a path segment. A word that BRACKETS a segment
-  // says what the page is ("browse X", "X listings", "page N"); the same word inside
-  // it is part of a name, and the requisition id says which posting it is.
-  for (const url of [
-    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Paid-Search-Manager_JR-10423',
-    'https://careers-acmetech.icims.com/jobs/44120/paid-search-manager/job',
+  // rejects everything. "Paid Search Manager", "Search Engineer" and "Results
+  // Analyst" are roles, and both verified vendor grammars put a real role name in a
+  // path segment. A segment made of NOTHING BUT these words names a surface
+  // (search, search-results, all-openings); a segment carrying an ordinary noun is
+  // naming a thing, and the requisition id in the same path says which posting.
+  // Where the vocabulary word sits in the slug is not the test -- it leads
+  // "Search-Engineer" and trails "Paid-Search-Manager" alike.
+  for (const [title, url] of [
+    [
+      'Paid Search Manager',
+      'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Paid-Search-Manager_JR-10423',
+    ],
+    [
+      'Search Engineer',
+      'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Search-Engineer_JR-10423',
+    ],
+    [
+      'Paid Search Manager',
+      'https://careers-acmetech.icims.com/jobs/44120/paid-search-manager/job',
+    ],
+    ['Search Engineer', 'https://careers-acmetech.icims.com/jobs/44120/search-engineer/job'],
+    ['Results Analyst', 'https://careers-acmetech.icims.com/jobs/44120/results-analyst/job'],
   ]) {
     const ctx = makeCtx({
       env: TAVILY_ENV,
       routes: {
         [TAVILY_KEY]: tavilyResponse([
           {
-            title: 'Paid Search Manager - Acme Technologies',
+            title: `${title} - Acme Technologies`,
             url,
-            content: 'Acme Technologies is hiring a Paid Search Manager in Dallas.',
+            content: `Acme Technologies is hiring a ${title} in Dallas.`,
             score: 0.88,
             raw_content: null,
           },
         ]),
       },
     });
-    const [lead] = await resolveNetwork(ctx, [employerLead('Paid Search Manager')]);
+    const [lead] = await resolveNetwork(ctx, [employerLead(title)]);
     assert.equal(lead.url, url, url);
     assert.equal(lead.canonical, true, url);
     assert.equal(lead.resolvedVia, 'tavily', url);
   }
+});
+
+await ta('Tier-2: a url Tavily returns twice keeps its best score', async () => {
+  // Tavily can return the same page more than once. Recording each occurrence
+  // unconditionally let a later, weaker page title overwrite the score the url had
+  // already earned, which either demotes the right posting below another result or
+  // manufactures a tie and falls back. The url is one posting either way, so the
+  // best evidence for it is what counts.
+  const best = 'https://boards.greenhouse.io/acmetech/jobs/7788';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: best,
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.9,
+          raw_content: null,
+        },
+        {
+          title: 'Job Application for VP Marketing Manager at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7789',
+          content: 'Acme Technologies is hiring a VP Marketing Manager.',
+          score: 0.7,
+          raw_content: null,
+        },
+        {
+          // The same posting again, under a wordier page title that scores lower.
+          title: 'Job Application for VP Marketing Manager at Acme Technologies',
+          url: best,
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.6,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.url, best);
+  assert.equal(lead.canonical, true);
+  assert.equal(lead.resolvedVia, 'tavily');
 });
 
 await ta(

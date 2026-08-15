@@ -347,10 +347,13 @@ t('resolve-canonical reads a listing word inside a segment, not only as a whole 
   // hyphenated, underscored, or camel-joined form of the same words fell through
   // and the facet number was read as a requisition id. A page or offset number is
   // indistinguishable from a requisition id by shape -- the path is what decides it.
+  //
+  // `/browse-marketing/4400` is deliberately NOT here. It has the same shape as
+  // `/search-engineer/44120` -- vocabulary word plus an ordinary noun, beside a
+  // number -- and nothing in a URL separates the two. It is left where it was.
   for (const url of [
     'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/search-results/4400',
     'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/SearchResults/4400',
-    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/browse-marketing/4400',
     'https://careers-acmetech.icims.com/jobs/page-1250',
     'https://careers-acmetech.icims.com/jobs/offset-1250',
     'https://careers-acmetech.icims.com/jobs/all-openings/1250',
@@ -361,14 +364,19 @@ t('resolve-canonical reads a listing word inside a segment, not only as a whole 
   }
 });
 t('resolve-canonical keeps a posting whose role name contains a listing word', () => {
-  // The other direction. "Paid Search Manager" is a role, and both verified vendor
-  // grammars put a real role name in a path segment; a word BRACKETING a segment
-  // says what the page is, the same word inside it is part of a name. Without this
-  // the rule above would reject real postings, and a guard that rejects everything
-  // looks exactly like one that works.
+  // The other direction, and the one that keeps this from being a rule that rejects
+  // everything. "Search Engineer", "Paid Search Manager" and "Results Analyst" are
+  // roles, and both verified vendor grammars put a real role name in a path segment.
+  // A segment made of NOTHING BUT these words names a surface; a segment carrying a
+  // word that is not one of them is naming a thing, and the requisition id in the
+  // same path says which posting it is. Position within the segment is not the test:
+  // the role word can lead or trail the slug as readily as it can sit inside it.
   for (const url of [
     'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Paid-Search-Manager_JR-10423',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Search-Engineer_JR-10423',
     'https://careers-acmetech.icims.com/jobs/44120/paid-search-manager/job',
+    'https://careers-acmetech.icims.com/jobs/44120/search-engineer/job',
+    'https://careers-acmetech.icims.com/jobs/44120/results-analyst/job',
   ]) {
     const r = resolveCanonical({ url });
     assert.equal(r.canonical, true, url);
