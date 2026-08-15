@@ -37,7 +37,7 @@ destination.
   `{company, title}` search URL, never the dead tracking link. Tier 2 prefers that
   fallback over a confident-but-wrong hit, since a wrong link looks correct while a
   search URL is visibly a search. It accepts a result on a shared ATS board, on an
-  employer's Workday or iCIMS tenant, or on the employer's own careers domain — but
+  employer's Workday or iCIMS tenant, or on the employer's own careers domain -- but
   only when the URL is tied to that employer by something other than the search
   ranking itself, the URL denotes one posting rather than a listings page, the
   company is named in the result, the role clears a title threshold, and no runner-up

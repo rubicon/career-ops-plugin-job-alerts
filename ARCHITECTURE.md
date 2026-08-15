@@ -111,7 +111,7 @@ it is instead of resolving to anything the gate would act on.
 Verdicts are parsed, never searched for. Comments in parentheses (which nest) and
 quoted strings are legal syntax carrying free diagnostic text (`reason="..."` is
 routine), so both are stripped before the field is split on `;` and the `dmarc`
-methodspec is read anchored at the start of its own part — which is what keeps a
+methodspec is read anchored at the start of its own part -- which is what keeps a
 `reason=dmarc=pass` property hanging off a _failing_ `spf` methodspec from being
 read as DMARC's own result. Conflicting verdicts do not vote: any non-pass from
 the boundary rejects the message.
@@ -139,10 +139,10 @@ only classifies: it marks a lead `canonical` when its host belongs to a known
 posting-host family and otherwise `needs-canonical`. Two kinds of family, because
 the resolver has to treat them differently:
 
-- **shared boards** (Greenhouse, Lever, Ashby) — the employer registers a slug and
+- **shared boards** (Greenhouse, Lever, Ashby) -- the employer registers a slug and
   the vendor serves every posting under it, so the first path segment identifies the
   employer and every URL on the board is a posting;
-- **per-employer tenants** (Workday, iCIMS) — the employer's name is a host label,
+- **per-employer tenants** (Workday, iCIMS) -- the employer's name is a host label,
   and the platform also serves index and faceted-search URLs, so a posting has to be
   told apart from a listing by its path.
 
@@ -173,8 +173,8 @@ The network resolution tiers are I/O and live in `resolve-network.mjs`:
 A wrong canonical URL is worse than none, since it looks correct to the reader,
 whereas a search URL is visibly a search. Every ambiguous case therefore falls
 through to the fallback. Tier 2 accepts three classes, each tied to the employer by
-something other than the search ranking that produced it — since the ranking is the
-very thing under test — and the weaker the host evidence, the more corroboration is
+something other than the search ranking that produced it -- since the ranking is the
+very thing under test -- and the weaker the host evidence, the more corroboration is
 demanded:
 
 |                    | shared board                     | tenant platform                    | employer domain                                      |
@@ -190,13 +190,13 @@ A host-classified result wins over an employer-domain one whenever both clear th
 gates, so the stronger evidence decides and the lead carries `canonical` wherever it
 honestly can.
 
-The employer-domain label must equal a slug built from the **whole** company name —
+The employer-domain label must equal a slug built from the **whole** company name --
 `acmetechnologies.com` or `acme-technologies.com` for "Acme Technologies", never a
 truncation of it. `candidateSlugs` also offers the first word, because Tier 1 needs
 it to _probe_ a board and a wrong guess there costs a 404; on a domain the same guess
 is emitted to the reader as the employer's own site, so it is not offered here. A
 **one-word company is declined outright**: for "Nova" the full-name form is "nova",
-so the rule is satisfied by construction — but then identity ("is the label the
+so the rule is satisfied by construction -- but then identity ("is the label the
 company's name") and corroboration ("does every company token appear") are the same
 single-token test, the defence in depth collapses, and a one-word label on a global
 namespace is exactly what an unrelated registrant of that word holds. A length floor
