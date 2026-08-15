@@ -293,6 +293,25 @@ t('resolve-canonical flags an unknown host needs-canonical', () => {
   assert.equal(r.canonical, false);
   assert.equal(r.status, 'needs-canonical');
 });
+t('resolve-canonical marks an employer tenant platform canonical (#22)', () => {
+  // Workday and iCIMS were excluded because Tier 1 cannot PROBE their per-tenant
+  // hosts, which is a fact about the ATS APIs, not about the URL. A lead that
+  // already points at one is an employer-canonical posting and must not be sent
+  // round the network only to come back as a search fallback.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/VP-Marketing_JR-10423',
+    'https://careers-acmetech.icims.com/jobs/44120/vp-marketing/job',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, true, url);
+    assert.equal(r.status, 'canonical', url);
+  }
+});
+t('resolve-canonical keeps a lookalike tenant-platform domain needs-canonical', () => {
+  const r = resolveCanonical({ url: 'https://myworkdayjobs.com.mirror.example/acme/job/1' });
+  assert.equal(r.canonical, false);
+  assert.equal(r.status, 'needs-canonical');
+});
 
 // -- stage: dedup ---------------------------------------------------------
 t('dedup collapses www and trailing-slash variants of the same url', () => {
@@ -337,6 +356,34 @@ t('buildJobs never emits an unresolved lead still pointing at its tracker (#8)',
   for (const job of jobs) {
     assert.doesNotMatch(job.url, /indeed\.com/, 'the tracker url is never emitted');
   }
+});
+t('buildJobs emits a resolved employer-hosted posting (#22)', () => {
+  // The third emit-eligible class: a posting on the employer's own site that Tier 2
+  // resolved and vouched for. It is named explicitly rather than admitted by
+  // widening `canonical`, so an unresolved lead still cannot slip through.
+  const jobs = buildJobs([
+    {
+      title: 'VP Marketing',
+      url: 'https://careers.acmetechnologies.com/jobs/vp-marketing',
+      company: 'Acme Technologies',
+      canonical: false,
+      employerCanonical: true,
+    },
+  ]);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].url, 'https://careers.acmetechnologies.com/jobs/vp-marketing');
+});
+t('buildJobs still drops an unresolved lead after the #22 widening', () => {
+  const jobs = buildJobs([
+    {
+      title: 'VP Marketing',
+      url: 'https://click.indeed.com/redirect?jk=AAA',
+      canonical: false,
+      employerCanonical: false,
+    },
+    { title: 'VP Marketing', url: 'https://click.indeed.com/redirect?jk=BBB', canonical: false },
+  ]);
+  assert.deepEqual(jobs, [], 'widening the contract did not open a path for the tracker');
 });
 
 // -- ingest wiring against the fake in-memory MailSource ------------------
