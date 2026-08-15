@@ -312,6 +312,50 @@ t('resolve-canonical keeps a lookalike tenant-platform domain needs-canonical', 
   assert.equal(r.canonical, false);
   assert.equal(r.status, 'needs-canonical');
 });
+t('resolve-canonical keeps a tenant-platform LISTING needs-canonical (#22)', () => {
+  // The family row for Workday and iCIMS declares `postingPath: true` precisely
+  // because these platforms serve prominent index and faceted-search URLs beside
+  // their postings. Classifying by host alone made every one of them canonical,
+  // which short-circuits all network resolution and emits a listing that outlives
+  // the role it was showing -- and contradicted the resolver, which applies the
+  // same row's posting-id requirement to the identical URL shapes.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/2026-Internships',
+    'https://careers-acmetech.icims.com/jobs/search?ss=1',
+    'https://careers-acmetech.icims.com/jobs/search/1250',
+    'https://www.icims.com/products',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+    assert.equal(r.status, 'needs-canonical', url);
+  }
+});
+t('resolve-canonical needs the posting id in a path the vendor actually publishes', () => {
+  // Both verified grammars put the id inside a multi-segment path
+  // (/en-US/{site}/job/{location}/{Role}_{id}, /jobs/{id}/{slug}/job). A bare
+  // numeric path is a shape neither vendor publishes, so it is not read as a
+  // posting on the strength of its digits alone.
+  for (const url of [
+    'https://careers-acmetech.icims.com/44120',
+    'https://acmetech.wd5.myworkdayjobs.com/10423',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+  }
+});
+t('resolve-canonical still needs no posting id on a shared board (#22)', () => {
+  // Only the families that declare `postingPath` carry the requirement. A shared
+  // board serves postings and little else, and Lever's are opaque UUIDs, so
+  // applying it globally would regress the class this plugin started with.
+  for (const url of [
+    'https://jobs.lever.co/acme/a1b2c3d4-e5f6',
+    'https://boards.greenhouse.io/acme',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, true, url);
+  }
+});
 
 // -- stage: dedup ---------------------------------------------------------
 t('dedup collapses www and trailing-slash variants of the same url', () => {
