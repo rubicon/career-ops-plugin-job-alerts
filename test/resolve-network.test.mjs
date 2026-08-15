@@ -837,6 +837,148 @@ await ta('Tier-2 miss: two equally good results tie, so nothing is guessed', asy
   assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
 });
 
+// -- the length floors and token rules INSIDE gates 2 and 3 ---------------
+// The five headline gates each fail a named test when removed, but the discipline
+// that makes gates 2 and 3 hard to satisfy by accident lives in their length floors
+// and token counts. Each test below is red when exactly that floor or count is
+// relaxed, so none of them can pass for free.
+
+await ta('Tier-2 miss: a board slug too short to be evidence is not evidence', async () => {
+  // "acm" is a substring of "acmetechnologies", so a bare containment test would
+  // tie this board to the company. Three characters is an accident, not evidence:
+  // MIN_SLUG_OVERLAP is what stands between this result and being emitted, since
+  // the company is named in the title and snippet and the role matches exactly.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acm/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.88,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, 'a 3-character slug cannot pin an employer');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta('Tier-2 miss: a short company name cannot anchor a containment match', async () => {
+  // The same floor from the other side. "Box" is a prefix of "Boxcryptor", a real
+  // and different employer, and the snippet names Box, so every other gate passes.
+  // The floor is the only thing that keeps a three-letter company name from
+  // claiming every board whose slug happens to start with it.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Boxcryptor',
+          url: 'https://boards.greenhouse.io/boxcryptor/jobs/4120',
+          content: 'Boxcryptor is hiring a VP Marketing to compete with Box and Dropbox.',
+          score: 0.9,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Box', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, "a prefix is not the employer's board");
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Box'));
+});
+
+await ta('Tier-2 miss: one shared word of a two-word company is not corroboration', async () => {
+  // Northstar Health is a different employer that shares a first word with
+  // Northstar Technologies, and its board slug relates to the company under gate 2.
+  // Only the rule that a multi-token company must match at least TWO of its tokens
+  // separates them; matching "northstar" alone would emit the wrong employer.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Northstar Health',
+          url: 'https://boards.greenhouse.io/northstar-health/jobs/5150',
+          content: 'Northstar Health is hiring a VP Marketing to lead brand.',
+          score: 0.91,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Northstar Technologies', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, 'a shared first word is not the same employer');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Northstar Technologies'));
+});
+
+await ta('a company with no token long enough to corroborate never reaches Tavily', async () => {
+  // "3M Co" leaves nothing usable: "co" is legal-entity noise and "3m" is too short
+  // to identify an employer inside a page of prose. With nothing to corroborate a
+  // hit against, the request is not worth making and the fallback stands.
+  const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: tavilyResponse([]) } });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: '3M Co', canonical: false },
+  ]);
+  assert.ok(
+    !ctx.calls.some((u) => u.includes('api.tavily.com')),
+    'no corroborating token means no search',
+  );
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', '3M Co'));
+});
+
+await ta('a lead with no title never reaches Tavily', async () => {
+  // Without a role there is nothing to score a result against, so gate 4 could
+  // never be satisfied and the call would only spend quota.
+  const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: tavilyResponse([]) } });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: '', url: TRACKER, company: 'Acme Technologies', canonical: false },
+  ]);
+  assert.ok(!ctx.calls.some((u) => u.includes('api.tavily.com')), 'no role means no search');
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.notEqual(lead.url, TRACKER);
+});
+
+await ta(
+  'Tier-2 hit: a legal suffix in the company name is not demanded of the result',
+  async () => {
+    // A posting page says "Acme", not "Acme Inc". Dropping legal-entity noise from the
+    // corroboration tokens is what keeps that from reading as a one-of-two miss and
+    // sending a correct, verified posting to the fallback.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Job Application for VP Marketing at Acme',
+            url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+            content: 'Acme is hiring a VP Marketing to lead brand and demand.',
+            score: 0.87,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [
+      { title: 'VP Marketing', url: TRACKER, company: 'Acme Inc', canonical: false },
+    ]);
+    assert.equal(lead.url, 'https://boards.greenhouse.io/acmetech/jobs/7788');
+    assert.equal(lead.resolvedVia, 'tavily');
+    assert.equal(lead.canonical, true);
+  },
+);
+
 await ta(
   'Tier-2 miss: an empty or shapeless Tavily response falls back, never crashes',
   async () => {
