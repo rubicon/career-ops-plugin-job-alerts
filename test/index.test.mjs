@@ -331,6 +331,39 @@ t('resolve-canonical keeps a tenant-platform LISTING needs-canonical (#22)', () 
     assert.equal(r.status, 'needs-canonical', url);
   }
 });
+t('resolve-canonical reads a listing word inside a segment, not only as a whole one', () => {
+  // The listing vocabulary was compared against whole segments only, so every
+  // hyphenated, underscored, or camel-joined form of the same words fell through
+  // and the facet number was read as a requisition id. A page or offset number is
+  // indistinguishable from a requisition id by shape -- the path is what decides it.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/search-results/4400',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/SearchResults/4400',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/browse-marketing/4400',
+    'https://careers-acmetech.icims.com/jobs/page-1250',
+    'https://careers-acmetech.icims.com/jobs/offset-1250',
+    'https://careers-acmetech.icims.com/jobs/all-openings/1250',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+    assert.equal(r.status, 'needs-canonical', url);
+  }
+});
+t('resolve-canonical keeps a posting whose role name contains a listing word', () => {
+  // The other direction. "Paid Search Manager" is a role, and both verified vendor
+  // grammars put a real role name in a path segment; a word BRACKETING a segment
+  // says what the page is, the same word inside it is part of a name. Without this
+  // the rule above would reject real postings, and a guard that rejects everything
+  // looks exactly like one that works.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Paid-Search-Manager_JR-10423',
+    'https://careers-acmetech.icims.com/jobs/44120/paid-search-manager/job',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, true, url);
+    assert.equal(r.status, 'canonical', url);
+  }
+});
 t('resolve-canonical needs the posting id in a path the vendor actually publishes', () => {
   // Both verified grammars put the id inside a multi-segment path
   // (/en-US/{site}/job/{location}/{Role}_{id}, /jobs/{id}/{slug}/job). A bare

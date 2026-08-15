@@ -1818,6 +1818,216 @@ await ta('Tier-2 miss: a faceted search is not a posting, whatever its digits', 
   }
 });
 
+// -- the listing vocabulary is read the same way wherever it appears ------
+//
+// Two vocabularies decide whether a path serves a list: the INDEX words (search,
+// results, browse, listing(s), all, page(s), offset) and the JOB words (jobs,
+// careers, openings, opportunities...). They used to be read two different ways --
+// index words only as a WHOLE segment, job words only as tokens of the final
+// segment -- so every hyphenated, underscored, or camel-joined form fell between
+// them and was emitted as a posting. Both are now read from the same tokenization,
+// and these are the forms that produced it, as a group rather than one literal at a
+// time.
+//
+// Every url below is otherwise perfect: right employer domain, every company token
+// present, a page title that scores 1.0 against the lead. Only the path says it is
+// a list.
+const LISTING_PATH_FORMS = [
+  // an index word trailing the role slug
+  'https://careers.acmetechnologies.com/vp-marketing-search',
+  'https://careers.acmetechnologies.com/vp-marketing-results',
+  'https://careers.acmetechnologies.com/vp-marketing-search-results',
+  'https://careers.acmetechnologies.com/vp-marketing-listings',
+  'https://careers.acmetechnologies.com/vp-marketing-listing',
+  // an index word leading it
+  'https://careers.acmetechnologies.com/browse-vp-marketing',
+  'https://careers.acmetechnologies.com/all-vp-marketing',
+  'https://acmetechnologies.com/jobs/search-vp-marketing',
+  'https://acmetechnologies.com/jobs/browse-vp-marketing',
+  // pagination, whose facet number is indistinguishable from a requisition id by
+  // shape -- so the shape is not what decides it, the path is
+  'https://acmetechnologies.com/jobs/page-1250',
+  'https://acmetechnologies.com/jobs/offset-1250',
+  'https://careers.acmetechnologies.com/vp-marketing/page-2',
+  // joined without a hyphen: an underscore, and a camel-case boundary
+  'https://acmetechnologies.com/jobs/vp_marketing_search',
+  'https://careers.acmetechnologies.com/SearchResults/VP-Marketing',
+  // a job word naming a category of postings, wherever it sits in the segment
+  'https://careers.acmetechnologies.com/vp-marketing-jobs',
+  'https://careers.acmetechnologies.com/vp-marketing-opportunities',
+  'https://careers.acmetechnologies.com/vp-marketing-vacancies',
+  'https://careers.acmetechnologies.com/vp-marketing-jobs-2026',
+  'https://careers.acmetechnologies.com/vp-marketing-search-2026',
+];
+
+await ta(
+  'Tier-2 miss: every hyphenated or joined listing form is a list, not a posting',
+  async () => {
+    for (const url of LISTING_PATH_FORMS) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'VP Marketing | Careers at Acme Technologies',
+              url,
+              content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+              score: 0.94,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [employerLead()]);
+      assert.equal(lead.resolvedVia, 'search-fallback', url);
+      assert.doesNotMatch(lead.url, /acmetechnologies\.com/, url);
+      assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'), url);
+    }
+  },
+);
+
+await ta('resolve-canonical reads the same vocabulary the same way on a vendor path', async () => {
+  // The classifier and the resolver share `looksLikeListingPath`, so a form that
+  // escapes one escapes the other: a tenant-platform listing was marked canonical
+  // on the strength of its facet number and short-circuited every resolution tier.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/search-results/4400',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/SearchResults/4400',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/browse-marketing/4400',
+    'https://careers-acmetech.icims.com/jobs/page-1250',
+    'https://careers-acmetech.icims.com/jobs/offset-1250',
+    'https://careers-acmetech.icims.com/jobs/all-openings/1250',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing - Acme Technologies',
+            url,
+            content: 'Acme Technologies is hiring a VP Marketing.',
+            score: 0.9,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead()]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+  }
+});
+
+await ta('Tier-2 hit: a vocabulary word INSIDE a role name is part of the name', async () => {
+  // The other direction, and the one that keeps this from being a rule that
+  // rejects everything: "Paid Search Manager" is a role, and both verified vendor
+  // grammars put a real role name in a path segment. A word that BRACKETS a segment
+  // says what the page is ("browse X", "X listings", "page N"); the same word inside
+  // it is part of a name, and the requisition id says which posting it is.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Paid-Search-Manager_JR-10423',
+    'https://careers-acmetech.icims.com/jobs/44120/paid-search-manager/job',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Paid Search Manager - Acme Technologies',
+            url,
+            content: 'Acme Technologies is hiring a Paid Search Manager in Dallas.',
+            score: 0.88,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead('Paid Search Manager')]);
+    assert.equal(lead.url, url, url);
+    assert.equal(lead.canonical, true, url);
+    assert.equal(lead.resolvedVia, 'tavily', url);
+  }
+});
+
+await ta(
+  'Tier-2 miss: on a bespoke domain the role name alone cannot carry a vocabulary word',
+  async () => {
+    // The employer class pays for its weaker evidence here too. On a vendor host the
+    // requisition id in the path says which posting this is, so "paid-search-manager"
+    // is safely a name. On the employer's own domain that segment is the ONLY thing
+    // identifying the posting, and nothing distinguishes it from "/vp-marketing-search".
+    // The honest answer is that we cannot tell, so it keeps the search fallback.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Paid Search Manager | Careers at Acme Technologies',
+            url: 'https://careers.acmetechnologies.com/jobs/paid-search-manager',
+            content: 'Acme Technologies is hiring a Paid Search Manager.',
+            score: 0.93,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead('Paid Search Manager')]);
+    assert.equal(lead.resolvedVia, 'search-fallback');
+    assert.doesNotMatch(lead.url, /acmetechnologies\.com/);
+  },
+);
+
+await ta('Tier-2 hit: a joined job word still says the path is about jobs', async () => {
+  // The same tokenization in the other direction: `/job-openings` says jobs exactly
+  // as plainly as `/jobs` does, and the whole-segment reading recognized only the
+  // second. This is the evidence direction, so a job word ANYWHERE in ANY segment
+  // counts -- unlike the final segment, where one of these words means the segment
+  // names a category.
+  const url = 'https://acmetechnologies.com/job-openings/vp-marketing-director';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing Director | Careers at Acme Technologies',
+          url,
+          content: 'Acme Technologies is hiring a VP Marketing Director.',
+          score: 0.91,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead('VP Marketing Director')]);
+  assert.equal(lead.url, url);
+  assert.equal(lead.employerCanonical, true);
+  assert.equal(lead.resolvedVia, 'tavily-employer');
+});
+
+await ta('Tier-2 hit: a posting id in the final segment still names one posting', async () => {
+  // A segment that carries a requisition id identifies a posting outright, so the
+  // vocabulary test never runs on it. Without this the rule above would reject a
+  // real bespoke posting whose slug happens to carry one of these words.
+  const url = 'https://careers.acmetechnologies.com/jobs/paid-search-manager-10423';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Paid Search Manager | Careers at Acme Technologies',
+          url,
+          content: 'Acme Technologies is hiring a Paid Search Manager.',
+          score: 0.93,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead('Paid Search Manager')]);
+  assert.equal(lead.url, url);
+  assert.equal(lead.employerCanonical, true);
+  assert.equal(lead.resolvedVia, 'tavily-employer');
+});
+
 // -- optional live integration (skipped unless RUN_LIVE_ATS is set) -------
 await ta('live: real ATS round-trip (skipped without RUN_LIVE_ATS)', async () => {
   if (!process.env.RUN_LIVE_ATS) {
