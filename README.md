@@ -32,7 +32,13 @@ destination.
   per authenticated email via the Anthropic API; without a key, or if a call
   fails, it falls back to deterministic subject-line and regex parsing.
 - **Resolves canonical URLs** in two tiers: known ATS boards (Greenhouse, Lever,
-  Ashby) by public API, then a search fallback via Tavily, else `needs-canonical`.
+  Ashby) probed by public API, then, when `TAVILY_API_KEY` is set, a Tavily search
+  for the posting those probes missed. A lead neither tier can pin down gets a live
+  `{company, title}` search URL, never the dead tracking link. Tier 2 prefers that
+  fallback over a confident-but-wrong hit: it accepts a search result only on a
+  canonical ATS host, with a board slug relatable to the company, the company named
+  in the result, a role title clearing the same threshold Tier 1 uses, and no
+  runner-up tied with it.
 - Returns `Job[]` (`title`, `url`, `company`, `location`). It is human-in-the-loop
   and never submits anything anywhere.
 

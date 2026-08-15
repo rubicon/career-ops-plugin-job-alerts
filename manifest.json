@@ -16,7 +16,8 @@
     "boards-api.greenhouse.io",
     "api.lever.co",
     "api.ashbyhq.com",
-    "api.anthropic.com"
+    "api.anthropic.com",
+    "api.tavily.com"
   ],
   "skill": "skill.md",
   "humanInTheLoop": true,

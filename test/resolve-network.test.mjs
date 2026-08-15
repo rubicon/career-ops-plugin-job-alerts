@@ -1,14 +1,19 @@
-// Unit tests for the Tier-1 network resolver (lib/resolve-network.mjs).
+// Unit tests for the network resolver (lib/resolve-network.mjs): Tier-1 ATS probes,
+// Tier-2 Tavily search, and the live search-URL fallback.
 // Hermetic: no network. A fake ctx.fetchJson returns captured public ATS response
-// shapes (Greenhouse boards-api, Lever postings, Ashby public posting-api) and
-// mirrors the engine's throw-on-non-2xx contract so a probe for a board that does
-// not exist rejects with a 404, exactly as the guarded fetch would. The tests
-// exercise real slug derivation, real request-building, and real title matching
-// against those real shapes; they never assert that a stub was merely called.
+// shapes (Greenhouse boards-api, Lever postings, Ashby public posting-api) and the
+// captured Tavily Search response shape, and mirrors the engine's throw-on-non-2xx
+// contract so a probe for a board that does not exist rejects with a 404, exactly as
+// the guarded fetch would. The tests exercise real slug derivation, real
+// request-building, and real title matching against those real shapes; they never
+// assert that a stub was merely called.
 //
-// An optional live integration test runs only when RUN_LIVE_ATS is set and is
-// skipped otherwise, so CI stays zero-network.
+// Optional live integration tests run only when RUN_LIVE_ATS / RUN_LIVE_TAVILY are
+// set and are skipped otherwise, so CI stays zero-network.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 
 import { resolveNetwork, candidateSlugs, buildSearchUrl } from '../lib/resolve-network.mjs';
 
@@ -38,11 +43,15 @@ const TRACKER = 'https://click.indeed.com/redirect?jk=ABC123';
 
 // Build a fake ctx whose fetchJson maps a URL substring to a captured response. A
 // URL with no matching route rejects with a 404, modeling the guarded fetch's
-// throw-on-non-2xx contract for a board that does not exist.
-function makeCtx({ routes = {}, logs } = {}) {
+// throw-on-non-2xx contract for a board that does not exist. `calls` records the
+// requested URLs; `requests` records the full { url, options } pair so a test can
+// assert the real request contract (method, headers, body) that was built.
+function makeCtx({ routes = {}, logs, env = {} } = {}) {
   const calls = [];
-  async function fetchJson(url) {
+  const requests = [];
+  async function fetchJson(url, options) {
     calls.push(url);
+    requests.push({ url, options });
     for (const key of Object.keys(routes)) {
       if (url.includes(key)) {
         const spec = typeof routes[key] === 'function' ? routes[key]() : routes[key];
@@ -61,7 +70,7 @@ function makeCtx({ routes = {}, logs } = {}) {
   const log = (...args) => {
     if (logs) logs.push(args.join(' '));
   };
-  return { fetchJson, calls, log };
+  return { fetchJson, calls, requests, log, env };
 }
 
 // -- captured ATS response shapes (from the official public API docs) -----
@@ -137,9 +146,41 @@ function ashbyBoard() {
   };
 }
 
+// Tavily Search API: POST https://api.tavily.com/search
+// Auth header: `Authorization: Bearer tvly-...`, body content type application/json.
+// Request body: { query, search_depth, max_results, topic, ... }
+// -> { query, results: [ { title, url, content, score, raw_content } ],
+//      response_time, request_id }
+// (docs.tavily.com/documentation/api-reference/endpoint/search)
+function tavilyResponse(results) {
+  return {
+    json: {
+      query: 'VP Marketing Acme Technologies careers job posting',
+      results,
+      response_time: 1.24,
+      request_id: '4d1c9f6e-2a77-4f1b-9c33-8b0e5a1d7f42',
+    },
+  };
+}
+
 const GH_KEY = 'boards-api.greenhouse.io/v1/boards/acme/jobs';
 const LEVER_KEY = 'api.lever.co/v0/postings/acme';
 const ASHBY_KEY = 'api.ashbyhq.com/posting-api/job-board/acme';
+const TAVILY_KEY = 'api.tavily.com/search';
+const TAVILY_ENV = { TAVILY_API_KEY: 'tvly-dev-testkey000000000000000000000' };
+
+// A Tier-2 lead: the board slug ("acmetech") is NOT derivable from the display name,
+// so every Tier-1 probe misses and Tier 2 is the only path to the canonical posting.
+function tier2Lead(title = 'VP Marketing') {
+  return {
+    title,
+    url: TRACKER,
+    company: 'Acme Technologies',
+    location: '',
+    canonical: false,
+    status: 'needs-canonical',
+  };
+}
 
 // -- slug derivation ------------------------------------------------------
 t('candidateSlugs lowercases, strips punctuation, and drops legal suffixes', () => {
@@ -476,6 +517,574 @@ await ta('an empty-company lead falls back without any probe', async () => {
   assert.equal(lead.url, buildSearchUrl('VP Marketing', ''));
 });
 
+// == Tier 2: Tavily canonical search ======================================
+// Tier 2 sits between the Tier-1 ATS probe and the search-URL fallback. It runs
+// only for a lead every Tier-1 probe missed, and only when TAVILY_API_KEY is set.
+
+// -- the manifest must actually permit the egress Tier 2 needs -------------
+t('manifest allows api.tavily.com and still requires no env', () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const manifest = JSON.parse(readFileSync(path.join(here, '..', 'manifest.json'), 'utf8'));
+  // Without this host the engine blocks the Tier-2 call and the tier silently
+  // never fires, so the manifest entry is part of the feature, not packaging.
+  assert.ok(
+    manifest.allowedHosts.includes('api.tavily.com'),
+    'api.tavily.com must be in manifest.allowedHosts',
+  );
+  // TAVILY_API_KEY is optional: the plugin must never demand it.
+  assert.deepEqual(manifest.requiredEnv, []);
+});
+
+// -- Tier-2 hit ------------------------------------------------------------
+await ta('Tier-2 hit: Tavily pins the canonical ATS posting Tier 1 could not guess', async () => {
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.8612,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  // The canonical url is the EXACT url field from the real response, not fabricated.
+  assert.equal(lead.url, 'https://boards.greenhouse.io/acmetech/jobs/7788');
+  assert.equal(lead.canonical, true);
+  assert.equal(lead.status, 'canonical');
+  assert.equal(lead.resolvedVia, 'tavily');
+  // The tracker is gone.
+  assert.notEqual(lead.url, TRACKER);
+  assert.doesNotMatch(lead.url, /indeed\.com/);
+  // Tier 1 was tried first and genuinely missed before Tier 2 ran.
+  assert.ok(ctx.calls.some((u) => u.includes('boards-api.greenhouse.io')));
+});
+
+// -- the real Tavily request contract, built from the official docs --------
+await ta('Tier-2 builds the documented Tavily POST request', async () => {
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: { [TAVILY_KEY]: tavilyResponse([]) },
+  });
+  await resolveNetwork(ctx, [tier2Lead()]);
+
+  const req = ctx.requests.find((r) => r.url.includes('api.tavily.com'));
+  assert.ok(req, 'Tier 2 issued a Tavily request');
+  assert.equal(req.url, 'https://api.tavily.com/search');
+  assert.equal(req.options.method, 'POST');
+
+  const headers = Object.fromEntries(
+    Object.entries(req.options.headers).map(([k, v]) => [k.toLowerCase(), v]),
+  );
+  assert.equal(headers.authorization, `Bearer ${TAVILY_ENV.TAVILY_API_KEY}`);
+  assert.equal(headers['content-type'], 'application/json');
+
+  const body = JSON.parse(req.options.body);
+  assert.equal(typeof body.query, 'string');
+  assert.ok(body.query.includes('VP Marketing'), 'the query carries the role title');
+  assert.ok(body.query.includes('Acme Technologies'), 'the query carries the company');
+  // max_results is documented as 0..20; anything else is a rejected request.
+  assert.equal(typeof body.max_results, 'number');
+  assert.ok(body.max_results >= 1 && body.max_results <= 20);
+  assert.ok(['basic', 'advanced', 'fast', 'ultra-fast'].includes(body.search_depth));
+  assert.ok(['general', 'news', 'finance'].includes(body.topic));
+});
+
+// -- optional key: absent means the tier never runs ------------------------
+await ta('no TAVILY_API_KEY: Tier 2 never fires and the existing fallback stands', async () => {
+  const ctx = makeCtx({ env: {}, routes: { [TAVILY_KEY]: tavilyResponse([]) } });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.ok(
+    !ctx.calls.some((u) => u.includes('api.tavily.com')),
+    'an absent key means no Tavily request at all',
+  );
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.equal(lead.searchFallback, true);
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+  assert.notEqual(lead.url, TRACKER);
+});
+
+// -- Tier 1 wins: Tier 2 must not run for a lead Tier 1 already resolved ---
+await ta('a Tier-1 hit short-circuits Tier 2 entirely', async () => {
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: { [GH_KEY]: greenhouseBoard(), [TAVILY_KEY]: tavilyResponse([]) },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Acme', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'ats');
+  assert.ok(
+    !ctx.calls.some((u) => u.includes('api.tavily.com')),
+    'Tier 2 is skipped when Tier 1 already pinned the posting',
+  );
+});
+
+// -- false-positive discipline: prefer the fallback over a wrong hit -------
+await ta('Tier-2 miss: aggregator results are never accepted as canonical', async () => {
+  // The whole point of the plugin is escaping aggregator/tracking links, so a
+  // result that is one cannot be the answer no matter how relevant it looks.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing at Acme Technologies | LinkedIn',
+          url: 'https://www.linkedin.com/jobs/view/3912345678',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.94,
+          raw_content: null,
+        },
+        {
+          title: 'VP Marketing - Acme Technologies - Indeed.com',
+          url: 'https://www.indeed.com/viewjob?jk=ZZZ999',
+          content: 'Acme Technologies VP Marketing role.',
+          score: 0.91,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+  assert.doesNotMatch(lead.url, /linkedin\.com/);
+  assert.doesNotMatch(lead.url, /indeed\.com/);
+});
+
+await ta('Tier-2 miss: an aggregator is rejected on its host alone', async () => {
+  // This result clears every OTHER gate: the path starts with the company's own
+  // board slug, the company is named in the title and snippet, and the role matches
+  // exactly. Only the host gate stands between it and being emitted as canonical,
+  // so this is what proves that gate carries its own weight.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing at Acme Technologies',
+          url: 'https://www.ziprecruiter.com/acmetech/vp-marketing',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.95,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /ziprecruiter\.com/);
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta('Tier-2 miss: a lookalike ATS domain is rejected', async () => {
+  // "boards.greenhouse.io.jobs-mirror.example" merely CONTAINS a canonical host.
+  // Every other gate passes, so this proves the host regex is anchored and that a
+  // suffix-lookalike cannot impersonate a canonical board.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io.jobs-mirror.example/acmetech/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.93,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /jobs-mirror/);
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta("Tier-2 miss: the right company named on someone else's board is rejected", async () => {
+  // A page on Globex's board that names Acme Technologies and the exact role: an
+  // agency listing, a partner post, a cross-post. Host, corroboration and title all
+  // pass, so only the board-slug gate can reject it. Emitting Globex's URL for an
+  // Acme role would be precisely the confident-but-wrong hit this tier must avoid.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://jobs.lever.co/globex/9f2a1b',
+          content: 'Acme Technologies is hiring a VP Marketing. Apply through Globex.',
+          score: 0.92,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /lever\.co/, "another employer's board is never the answer");
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta('Tier-2 miss: a lookalike company on a real ATS board is rejected', async () => {
+  // "metabase" contains "meta", so the slug relation alone would pass. Only the
+  // corroboration gate notices that nothing here actually names Meta, which is what
+  // proves that gate is load-bearing rather than decorative.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Metabase',
+          url: 'https://boards.greenhouse.io/metabase/jobs/4242',
+          content: 'Metabase is hiring a VP Marketing to lead the team.',
+          score: 0.89,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Meta', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(
+    lead.url,
+    /greenhouse\.io/,
+    'a name that merely contains the company is not the company',
+  );
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Meta'));
+});
+
+await ta('Tier-2 miss: a matching title on ANOTHER employer board is rejected', async () => {
+  // The single most dangerous false positive: right role, right shape, wrong
+  // company. Nothing about the URL ties it to the lead's employer.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Globex Industries',
+          url: 'https://jobs.lever.co/globex/9f2a1b',
+          content: 'Globex Industries is hiring a VP Marketing.',
+          score: 0.88,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /lever\.co/, 'no other employer posting is emitted');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta('Tier-2 miss: the right employer but a more senior sibling role is rejected', async () => {
+  // Same symmetric title discipline as Tier 1: "Marketing Manager" inside
+  // "Senior Product Marketing Manager" is a weak partial overlap, not a match,
+  // even though the company and the board are both correct.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for Senior Product Marketing Manager at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7799',
+          content: 'Acme Technologies is hiring a Senior Product Marketing Manager.',
+          score: 0.9,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead('Marketing Manager')]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, 'a weak partial overlap is not a hit');
+  assert.equal(lead.url, buildSearchUrl('Marketing Manager', 'Acme Technologies'));
+});
+
+await ta('Tier-2 miss: two equally good results tie, so nothing is guessed', async () => {
+  // Both regional postings clear every gate and score identically. Picking either
+  // would be an arbitrary guess, so the resolver falls back instead.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing, EMEA at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/8001',
+          content: 'Acme Technologies VP Marketing EMEA.',
+          score: 0.87,
+          raw_content: null,
+        },
+        {
+          title: 'Job Application for VP Marketing, Americas at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/8002',
+          content: 'Acme Technologies VP Marketing Americas.',
+          score: 0.86,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, 'no arbitrary posting URL is emitted on a tie');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+// -- the length floors and token rules INSIDE gates 2 and 3 ---------------
+// The five headline gates each fail a named test when removed, but the discipline
+// that makes gates 2 and 3 hard to satisfy by accident lives in their length floors
+// and token counts. Each test below is red when exactly that floor or count is
+// relaxed, so none of them can pass for free.
+
+await ta('Tier-2 miss: a board slug too short to be evidence is not evidence', async () => {
+  // "acm" is a substring of "acmetechnologies", so a bare containment test would
+  // tie this board to the company. Three characters is an accident, not evidence:
+  // MIN_SLUG_OVERLAP is what stands between this result and being emitted, since
+  // the company is named in the title and snippet and the role matches exactly.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acm/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.88,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, 'a 3-character slug cannot pin an employer');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta('Tier-2 miss: a short company name cannot anchor a containment match', async () => {
+  // The same floor from the other side. "Box" is a prefix of "Boxcryptor", a real
+  // and different employer, and the snippet names Box, so every other gate passes.
+  // The floor is the only thing that keeps a three-letter company name from
+  // claiming every board whose slug happens to start with it.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Boxcryptor',
+          url: 'https://boards.greenhouse.io/boxcryptor/jobs/4120',
+          content: 'Boxcryptor is hiring a VP Marketing to compete with Box and Dropbox.',
+          score: 0.9,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Box', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, "a prefix is not the employer's board");
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Box'));
+});
+
+await ta('Tier-2 miss: one shared word of a two-word company is not corroboration', async () => {
+  // Northstar Health is a different employer that shares a first word with
+  // Northstar Technologies, and its board slug relates to the company under gate 2.
+  // Only the rule that a multi-token company must match at least TWO of its tokens
+  // separates them; matching "northstar" alone would emit the wrong employer.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Northstar Health',
+          url: 'https://boards.greenhouse.io/northstar-health/jobs/5150',
+          content: 'Northstar Health is hiring a VP Marketing to lead brand.',
+          score: 0.91,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Northstar Technologies', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /greenhouse\.io/, 'a shared first word is not the same employer');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Northstar Technologies'));
+});
+
+await ta('a company with no token long enough to corroborate never reaches Tavily', async () => {
+  // "3M Co" leaves nothing usable: "co" is legal-entity noise and "3m" is too short
+  // to identify an employer inside a page of prose. With nothing to corroborate a
+  // hit against, the request is not worth making and the fallback stands.
+  const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: tavilyResponse([]) } });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: '3M Co', canonical: false },
+  ]);
+  assert.ok(
+    !ctx.calls.some((u) => u.includes('api.tavily.com')),
+    'no corroborating token means no search',
+  );
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', '3M Co'));
+});
+
+await ta('a lead with no title never reaches Tavily', async () => {
+  // Without a role there is nothing to score a result against, so gate 4 could
+  // never be satisfied and the call would only spend quota.
+  const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: tavilyResponse([]) } });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: '', url: TRACKER, company: 'Acme Technologies', canonical: false },
+  ]);
+  assert.ok(!ctx.calls.some((u) => u.includes('api.tavily.com')), 'no role means no search');
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.notEqual(lead.url, TRACKER);
+});
+
+await ta(
+  'Tier-2 hit: a legal suffix in the company name is not demanded of the result',
+  async () => {
+    // A posting page says "Acme", not "Acme Inc". Dropping legal-entity noise from the
+    // corroboration tokens is what keeps that from reading as a one-of-two miss and
+    // sending a correct, verified posting to the fallback.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Job Application for VP Marketing at Acme',
+            url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+            content: 'Acme is hiring a VP Marketing to lead brand and demand.',
+            score: 0.87,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [
+      { title: 'VP Marketing', url: TRACKER, company: 'Acme Inc', canonical: false },
+    ]);
+    assert.equal(lead.url, 'https://boards.greenhouse.io/acmetech/jobs/7788');
+    assert.equal(lead.resolvedVia, 'tavily');
+    assert.equal(lead.canonical, true);
+  },
+);
+
+await ta(
+  'Tier-2 miss: an empty or shapeless Tavily response falls back, never crashes',
+  async () => {
+    for (const spec of [tavilyResponse([]), { json: {} }, { json: { results: null } }]) {
+      const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: spec } });
+      const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
+      assert.equal(lead.resolvedVia, 'search-fallback');
+      assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+    }
+  },
+);
+
+// -- Tavily failures degrade, never abort the run --------------------------
+await ta('a Tavily 401 disables the tier for the run instead of retrying per lead', async () => {
+  const logs = [];
+  const ctx = makeCtx({ env: TAVILY_ENV, logs, routes: { [TAVILY_KEY]: { status: 401 } } });
+  const leads = await resolveNetwork(ctx, [tier2Lead(), tier2Lead('Head of Growth')]);
+  const tavilyCalls = ctx.calls.filter((u) => u.includes('api.tavily.com'));
+  assert.equal(tavilyCalls.length, 1, 'a rejected key is not re-tried for every lead');
+  for (const lead of leads) {
+    assert.equal(lead.resolvedVia, 'search-fallback');
+    assert.notEqual(lead.url, TRACKER);
+  }
+  assert.ok(
+    logs.some((l) => /401/.test(l)),
+    'the run says why the tier stopped',
+  );
+});
+
+await ta('a transient Tavily error falls back for that lead and keeps trying', async () => {
+  const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: { status: 429 } } });
+  const leads = await resolveNetwork(ctx, [tier2Lead(), tier2Lead('Head of Growth')]);
+  const tavilyCalls = ctx.calls.filter((u) => u.includes('api.tavily.com'));
+  assert.equal(tavilyCalls.length, 2, 'a rate-limit is not a permanent shutdown');
+  for (const lead of leads) assert.equal(lead.resolvedVia, 'search-fallback');
+});
+
+// -- no company means nothing to corroborate a hit against -----------------
+await ta('an empty-company lead never reaches Tavily', async () => {
+  const ctx = makeCtx({ env: TAVILY_ENV, routes: { [TAVILY_KEY]: tavilyResponse([]) } });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: '', canonical: false },
+  ]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.equal(ctx.calls.length, 0, 'no company means no probe and no search');
+});
+
+// -- the tracker is still never emitted with Tier 2 enabled ----------------
+await ta('with Tier 2 enabled, no emitted url is ever the dead tracking link', async () => {
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.86,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const leads = await resolveNetwork(ctx, [
+    tier2Lead(),
+    tier2Lead('General Counsel'),
+    {
+      title: 'Chief People Officer',
+      url: 'https://t.co/xyz',
+      company: 'Nowhere',
+      canonical: false,
+    },
+  ]);
+  for (const lead of leads) {
+    assert.notEqual(lead.url, TRACKER);
+    assert.doesNotMatch(lead.url, /indeed\.com/);
+    assert.doesNotMatch(lead.url, /t\.co/);
+    assert.doesNotThrow(() => new URL(lead.url), 'every emitted url is a real URL');
+  }
+});
+
+// -- per-tier counts stay transparent -------------------------------------
+await ta('resolveNetwork reports the Tavily count alongside the other tiers', async () => {
+  const logs = [];
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    logs,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.86,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  await resolveNetwork(ctx, [tier2Lead(), tier2Lead('General Counsel')]);
+  assert.ok(
+    logs.some((l) => /tavily/i.test(l) && /search fallback/i.test(l)),
+    'a summary line names the Tavily and search-fallback counts',
+  );
+});
+
 // -- optional live integration (skipped unless RUN_LIVE_ATS is set) -------
 await ta('live: real ATS round-trip (skipped without RUN_LIVE_ATS)', async () => {
   if (!process.env.RUN_LIVE_ATS) {
@@ -509,6 +1118,42 @@ await ta('live: real ATS round-trip (skipped without RUN_LIVE_ATS)', async () =>
   assert.notEqual(lead.url, TRACKER);
   assert.doesNotThrow(() => new URL(lead.url));
   console.log(`  live ATS resolution ok: resolvedVia=${lead.resolvedVia} url=${lead.url}`);
+});
+
+// -- optional live Tavily round-trip (skipped unless RUN_LIVE_TAVILY is set) --
+await ta('live: real Tavily round-trip (skipped without RUN_LIVE_TAVILY)', async () => {
+  if (!process.env.RUN_LIVE_TAVILY || !process.env.TAVILY_API_KEY) {
+    console.log('  SKIP live Tavily: set RUN_LIVE_TAVILY=1 and TAVILY_API_KEY to run it');
+    return;
+  }
+  const { fetch: nodeFetch } = globalThis;
+  const ctx = {
+    env: { TAVILY_API_KEY: process.env.TAVILY_API_KEY },
+    fetchJson: async (url, options) => {
+      const res = await nodeFetch(url, options);
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.status = res.status;
+        throw err;
+      }
+      return res.json();
+    },
+    log: (...a) => console.log(...a),
+  };
+  // Every Tier-1 probe for this company misses, so the live call exercises Tier 2.
+  const [lead] = await resolveNetwork(ctx, [
+    {
+      title: process.env.LIVE_TAVILY_TITLE || 'Software Engineer',
+      url: TRACKER,
+      company: process.env.LIVE_TAVILY_COMPANY || 'Acme Technologies',
+      canonical: false,
+      status: 'needs-canonical',
+    },
+  ]);
+  assert.ok(['ats', 'tavily', 'search-fallback'].includes(lead.resolvedVia));
+  assert.notEqual(lead.url, TRACKER);
+  assert.doesNotThrow(() => new URL(lead.url));
+  console.log(`  live Tavily ok: resolvedVia=${lead.resolvedVia} url=${lead.url}`);
 });
 
 console.log(`resolve-network.test: ${pass} passed, ${fail} failed`);

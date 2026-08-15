@@ -137,10 +137,30 @@ carries.
 Canonical resolution lives in this plugin (it is not shared). `resolve-canonical.mjs`
 only classifies: it marks a lead `canonical` when its host is a known applicant
 tracking system (Greenhouse, Lever, Ashby) and otherwise `needs-canonical`. Workday
-is intentionally excluded because its hosts are dynamic per tenant. The network
-resolution tiers (Tier 1 ATS API lookup by `{company, title}`, Tier 2 Tavily search)
-are I/O owned by the hook and land in their own issue. This module never fetches,
-never fabricates a URL, and never keeps a dead tracking link.
+is intentionally excluded because its hosts are dynamic per tenant. It exports
+`ATS_HOST_RE` so the network resolver tests candidate URLs against this one
+definition of "canonical" rather than a second copy that could drift. This module
+never fetches, never fabricates a URL, and never keeps a dead tracking link.
+
+The network resolution tiers are I/O and live in `resolve-network.mjs`:
+
+- **Tier 1** probes the public Greenhouse, Lever, and Ashby board APIs with slugs
+  guessed from the company name, and takes the posting whose title uniquely clears
+  a symmetric Jaccard threshold.
+- **Tier 2** runs only for a lead Tier 1 missed, and only when `TAVILY_API_KEY` is
+  set. It POSTs to the Tavily Search API and accepts a result only when all of the
+  following hold: the host matches `ATS_HOST_RE`; the board slug in the path is
+  relatable to the company; the company's tokens appear in the result title or
+  snippet; the role clears Tier 1's title threshold once page boilerplate and the
+  company name are stripped; and no other result ties it. Tavily's own `score` is
+  not a gate, because the API docs define neither a range nor a threshold for it.
+- **Fallback** is a live `{company, title}` search URL.
+
+A wrong canonical URL is worse than none, since it looks correct to the reader, so
+every ambiguous case falls through to the fallback. Tier 2 deliberately does not
+surface employer-hosted careers pages (Workday, iCIMS, bespoke sites): they cannot
+be verified as a posting, and marking one `canonical` would contradict
+`resolve-canonical.mjs`.
 
 ## Data flow
 
