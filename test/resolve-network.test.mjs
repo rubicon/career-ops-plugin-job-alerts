@@ -1335,13 +1335,18 @@ await ta('Tier-2 miss: a bespoke result must account for every company token', a
   // already tied the posting to the employer. On a bespoke domain the corroboration
   // is doing that work alone, so "Northstar Health" cannot stand in for "Northstar
   // Health Systems".
+  //
+  // The domain here is the employer's own full-name form, so the identity gate is
+  // SATISFIED and corroboration is the only thing left to reject the result. Pointing
+  // this at northstar.com instead would let the identity gate reject it first and the
+  // test would pass without ever exercising the rule it names.
   const ctx = makeCtx({
     env: TAVILY_ENV,
     routes: {
       [TAVILY_KEY]: tavilyResponse([
         {
           title: 'VP Marketing | Careers at Northstar Health',
-          url: 'https://careers.northstar.com/jobs/vp-marketing',
+          url: 'https://careers.northstarhealthsystems.com/jobs/vp-marketing',
           content: 'Northstar Health is hiring a VP Marketing.',
           score: 0.9,
           raw_content: null,
@@ -1353,7 +1358,7 @@ await ta('Tier-2 miss: a bespoke result must account for every company token', a
     employerLead('VP Marketing', 'Northstar Health Systems'),
   ]);
   assert.equal(lead.resolvedVia, 'search-fallback');
-  assert.doesNotMatch(lead.url, /northstar\.com/);
+  assert.doesNotMatch(lead.url, /northstarhealthsystems\.com/);
 });
 
 await ta(
@@ -1460,6 +1465,357 @@ await ta('resolveNetwork reports the employer-site count alongside the other tie
     logs.some((l) => /employer/i.test(l) && /search fallback/i.test(l)),
     'a summary line names the employer-site count',
   );
+});
+
+// -- bespoke employer domains: the label must be the WHOLE company name ---
+//
+// `candidateSlugs` offers a first-word form so Tier 1 can PROBE a board named after
+// it; a wrong guess there costs a 404. Reusing that set as the domain-identity gate
+// turned the stated rule -- "the label EQUALS a slug derived from the company name"
+// -- into equality against a TRUNCATION of it, which is the very "guess dressed as
+// evidence" the equality bar exists to refuse, and on a global namespace rather than
+// inside a trusted vendor. The identity gate uses the full-name forms only.
+
+await ta(
+  'Tier-2 miss: a domain label that is only the company first word is rejected',
+  async () => {
+    // Every other gate passes. "acme.tk" is a two-label registrable host whose label
+    // is a common word any registrant could hold; nothing here ties it to Acme
+    // Technologies, and the shorter, more collision-prone label must not be accepted
+    // where the longer, more specific "acmetech.com" is already declined.
+    for (const url of [
+      'https://careers.acme.tk/jobs/vp-marketing',
+      'https://acme.xyz/careers/vp-marketing',
+      'https://careers.acme.com/jobs/vp-marketing',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'VP Marketing | Careers at Acme Technologies',
+              url,
+              content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+              score: 0.93,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [employerLead()]);
+      assert.equal(lead.resolvedVia, 'search-fallback', url);
+      assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'), url);
+    }
+  },
+);
+
+await ta('Tier-2 hit: the hyphenated full-name form of the domain label is accepted', async () => {
+  // Both forms derived from the WHOLE company name are legitimate registrations of
+  // the same name, so both satisfy equality; only the truncation does not.
+  const url = 'https://careers.acme-technologies.com/jobs/vp-marketing';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url,
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.86,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.url, url);
+  assert.equal(lead.employerCanonical, true);
+  assert.equal(lead.resolvedVia, 'tavily-employer');
+});
+
+await ta('Tier-2 miss: a single-word company is never resolved to a bespoke domain', async () => {
+  // For a one-word company the full-name form and the first-word form are the same
+  // string, so the identity gate degenerates: "the label equals the whole company
+  // name" and "every company token is corroborated" become the same single-token
+  // test, and the two gates that are meant to be independent stop being so. A
+  // one-word label on a global namespace is exactly what an unrelated registrant of
+  // the same common word holds, so this class keeps the honest search fallback.
+  for (const [company, url] of [
+    ['Nova', 'https://careers.nova.io/jobs/vp-marketing'],
+    ['Northstar', 'https://careers.northstar.com/jobs/vp-marketing'],
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: `VP Marketing | Careers at ${company}`,
+            url,
+            content: `${company} is hiring a VP Marketing to lead brand and demand.`,
+            score: 0.94,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead('VP Marketing', company)]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+    assert.equal(lead.url, buildSearchUrl('VP Marketing', company), url);
+  }
+});
+
+// -- bespoke employer domains: the recognized host shapes ----------------
+//
+// The allowlist of host SHAPES stands in for a public-suffix list. Each branch of it
+// decides real URLs, so each gets a test that fails when the branch is removed.
+
+await ta('Tier-2 hit: a country-code employer domain is recognized (label.xx.yy)', async () => {
+  // Without the second-level-head branch this host reads as three labels and is
+  // declined, so a UK employer's own careers site never resolves.
+  const url = 'https://careers.acmetechnologies.co.uk/jobs/vp-marketing';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url,
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.87,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.url, url);
+  assert.equal(lead.employerCanonical, true);
+});
+
+await ta('Tier-2 miss: a two-part suffix outside the allowlist is declined', async () => {
+  // "zz" is not a recognized second-level head, and "london" is not a two-letter
+  // country code. Both are shapes this module does not read as registrable, so both
+  // are declined rather than guessed at -- which is what the allowlist is for.
+  for (const url of [
+    'https://careers.acmetechnologies.zz.uk/jobs/vp-marketing',
+    'https://careers.acmetechnologies.co.london/jobs/vp-marketing',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing | Careers at Acme Technologies',
+            url,
+            content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+            score: 0.93,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead()]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+  }
+});
+
+await ta('Tier-2 hit: a www-prefixed employer domain is recognized', async () => {
+  // Without the leading-www strip this host reads as three labels, "www" is not a
+  // recognized second-level head, and the employer's own posting is declined.
+  const url = 'https://www.acmetechnologies.com/careers/vp-marketing';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url,
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.85,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.url, url);
+  assert.equal(lead.employerCanonical, true);
+});
+
+// -- bespoke employer domains: a role-scoped LISTING is not a posting ----
+//
+// A job word is never a role word. The result-title normalization already drops it,
+// so a page titled "VP Marketing Jobs" scores a perfect match against a "VP
+// Marketing" lead; the path normalization counted the same word toward the role, so
+// a category page cleared the posting-shape gate by carrying the very word that
+// marks it as a category. Both normalizations now agree that it carries no role
+// evidence, and in a path segment it is affirmative evidence of a category.
+
+await ta('Tier-2 miss: a role-scoped listing page is not a posting', async () => {
+  for (const url of [
+    'https://careers.acmetechnologies.com/vp-marketing-jobs',
+    'https://careers.acmetechnologies.com/jobs/vp-marketing-openings',
+    'https://acmetechnologies.com/careers/vp-marketing-careers',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing Jobs | Careers at Acme Technologies',
+            url,
+            content: 'Browse all VP Marketing openings at Acme Technologies.',
+            score: 0.94,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead()]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+    assert.doesNotMatch(lead.url, /acmetechnologies\.com/, url);
+  }
+});
+
+await ta('Tier-2 miss: one shared role word in the final segment is not a posting', async () => {
+  // "/marketing" under a careers host shares a single token with the lead title,
+  // which names a section rather than a posting. The two-token floor is the only
+  // thing between it and being emitted; at one token it would be accepted.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url: 'https://careers.acmetechnologies.com/marketing',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.92,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /acmetechnologies\.com/);
+});
+
+await ta('Tier-2 miss: a bare job-word path on a bare domain is not a posting', async () => {
+  // The single path segment is the job word itself. It can be neither a posting id
+  // nor a role slug, so it is a careers index -- the case the removed
+  // `segments.length < 2` guard was written for, still declined without it.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url: 'https://acmetechnologies.com/jobs',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.92,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.doesNotMatch(lead.url, /acmetechnologies\.com/);
+});
+
+// -- posting ids: a year anywhere, and a faceted search ------------------
+//
+// The digit floor tells a requisition id from a locale or a short counter. Two
+// classes of path segment clear it without being a posting: one carrying a calendar
+// year, and a numeric facet under a path that says it is a search. Excluding a BARE
+// year segment covered one literal of the first class and none of the second.
+
+await ta('Tier-2 miss: a year anywhere in a segment is not a posting id', async () => {
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/2026-Internships',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/summer-2026',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/class-of-2026',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Marketing Intern - Acme',
+            url,
+            content: 'Acme is hiring a Marketing Intern.',
+            score: 0.91,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead('Marketing Intern', 'Acme')]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+    assert.doesNotMatch(lead.url, /myworkdayjobs\.com/, url);
+  }
+});
+
+await ta(
+  'Tier-2 hit: a requisition id that merely contains year-like digits still counts',
+  async () => {
+    // The exclusion must remove a calendar year, not any four digits that resemble
+    // one: "JR-20264" is a requisition number and "10423" is the shape both vendors
+    // publish. Narrowing to the class must not swallow the class it protects.
+    for (const url of [
+      'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/VP-Marketing_JR-20264',
+      'https://careers-acmetech.icims.com/jobs/44120/vp-marketing/job',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'VP Marketing - Acme Technologies',
+              url,
+              content: 'Acme Technologies is hiring a VP Marketing in Dallas.',
+              score: 0.88,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [employerLead()]);
+      assert.equal(lead.url, url, url);
+      assert.equal(lead.canonical, true, url);
+      assert.equal(lead.resolvedVia, 'tavily', url);
+    }
+  },
+);
+
+await ta('Tier-2 miss: a faceted search is not a posting, whatever its digits', async () => {
+  // A path that says it is a search is a listing however many digits its facet
+  // carries; a page or offset number is indistinguishable from a requisition id by
+  // shape, so the shape is not what decides it.
+  for (const url of [
+    'https://careers-acmetech.icims.com/jobs/search/1250',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/search/results/4400',
+    // The same rule on the employer's own domain, where the final segment is a role
+    // slug and would otherwise clear the two-token floor on its own.
+    'https://careers.acmetechnologies.com/jobs/search/vp-marketing',
+  ]) {
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'VP Marketing - Acme Technologies',
+            url,
+            content: 'Acme Technologies is hiring a VP Marketing.',
+            score: 0.9,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead()]);
+    assert.equal(lead.resolvedVia, 'search-fallback', url);
+  }
 });
 
 // -- optional live integration (skipped unless RUN_LIVE_ATS is set) -------

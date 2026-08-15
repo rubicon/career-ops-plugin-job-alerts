@@ -150,10 +150,14 @@ Workday and iCIMS have no Tier-1 probe, because their per-tenant hosts cannot be
 enumerated in `manifest.allowedHosts`. That bars probing them, not recognizing them:
 a Workday posting URL is as canonical as a Greenhouse one, and classifying it
 otherwise sent a perfectly good posting round the network to come back as a search
-fallback. The module exports `CANONICAL_HOST_FAMILIES` / `canonicalHostFamily` so
-the network resolver decides against this one definition of "canonical" rather than
-a second copy that could drift. It never fetches, never fabricates a URL, and never
-keeps a dead tracking link.
+fallback. Their family rows declare `postingPath`, and the classifier applies it: a
+tenant index or faceted search is _not_ canonical on the strength of its host, since
+a job alert links to "see all jobs" and to saved searches as readily as to a posting,
+and marking one canonical short-circuits every resolution tier and emits a listing
+that outlives the role it was showing. The module exports `CANONICAL_HOST_FAMILIES` /
+`canonicalHostFamily` and the posting-shape predicates so the network resolver decides
+against this one definition of "canonical" rather than a second copy that could drift.
+It never fetches, never fabricates a URL, and never keeps a dead tracking link.
 
 The network resolution tiers are I/O and live in `resolve-network.mjs`:
 
@@ -175,7 +179,7 @@ demanded:
 
 |                    | shared board                     | tenant platform                    | employer domain                                      |
 | ------------------ | -------------------------------- | ---------------------------------- | ---------------------------------------------------- |
-| identity           | vendor host + board slug in path | vendor host + tenant in host label | domain label **equals** a company slug               |
+| identity           | vendor host + board slug in path | vendor host + tenant in host label | domain label **is** the whole company name           |
 | employer test      | slug relatable to company        | tenant relatable to company        | equality, on a host shape recognized as registrable  |
 | posting vs listing | every board URL is a posting     | posting id required in path        | job-word host or path, and a role slug or posting id |
 | corroboration      | two company tokens               | two company tokens                 | **every** company token                              |
@@ -186,13 +190,28 @@ A host-classified result wins over an employer-domain one whenever both clear th
 gates, so the stronger evidence decides and the lead carries `canonical` wherever it
 honestly can.
 
+The employer-domain label must equal a slug built from the **whole** company name —
+`acmetechnologies.com` or `acme-technologies.com` for "Acme Technologies", never a
+truncation of it. `candidateSlugs` also offers the first word, because Tier 1 needs
+it to _probe_ a board and a wrong guess there costs a 404; on a domain the same guess
+is emitted to the reader as the employer's own site, so it is not offered here. A
+**one-word company is declined outright**: for "Nova" the full-name form is "nova",
+so the rule is satisfied by construction — but then identity ("is the label the
+company's name") and corroboration ("does every company token appear") are the same
+single-token test, the defence in depth collapses, and a one-word label on a global
+namespace is exactly what an unrelated registrant of that word holds. A length floor
+on the label or a TLD allowlist would be an invented threshold, so that class keeps
+the fallback.
+
 What Tier 2 still declines, deliberately, keeping the search fallback: an employer
-domain whose label is only _similar_ to a company slug (`acmetech.com` for "Acme
-Technologies"), because containment on a global namespace is how a confident wrong
-employer gets emitted; a host shape not recognized as a registrable domain, since
-this is an allowlist of shapes and deliberately not a public-suffix list; and any
-vendor whose tenant location and posting-URL shape have not been verified from that
-vendor's own material.
+domain whose label is only _similar_ to the company name (`acmetech.com` for "Acme
+Technologies") or only its first word (`acme.tk`), because a relation short of
+equality on a global namespace is how a confident wrong employer gets emitted; a host
+shape not recognized as a registrable domain, since this is an allowlist of shapes
+and deliberately not a public-suffix list; a role-scoped listing (`/vp-marketing-jobs`),
+a faceted search, and a path segment dated by a calendar year rather than identified
+by a requisition id; and any vendor whose tenant location and posting-URL shape have
+not been verified from that vendor's own material.
 
 ## Data flow
 
