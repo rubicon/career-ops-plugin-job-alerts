@@ -108,11 +108,21 @@ methodspec is read anchored at the start of its own part — which is what keeps
 read as DMARC's own result. Conflicting verdicts do not vote: any non-pass from
 the boundary rejects the message.
 
-Because a plain-object header map cannot hold two values under one key,
-`lib/headers.mjs` fixes one encoding for every adapter: repeated instances of a
-name are joined with `\n` and the gate splits them back apart (re-joining RFC 5322
-continuation lines). An adapter that overwrote on a repeat would destroy the only
-field that carries any weight.
+Because a header name legitimately repeats, `lib/headers.mjs` fixes one encoding
+for every adapter: each key holds an array of instance values, one entry per
+occurrence, in provider order. An adapter that overwrote on a repeat would destroy
+the only field that carries any weight.
+
+The array is what keeps the two RFC 5322 boundaries apart. A field also folds
+across lines, and a continuation line is recognised by the whitespace it starts
+with, so text beginning with whitespace reads as a continuation of whatever
+preceded it. Joining the instances into one string leaves the reader unable to
+tell "this continues the field above" from "this is the next instance", and an
+instance opening with whitespace is then appended to the one above it, carrying
+that instance's authserv-id with it. With the instances kept apart, one instance
+is one field: folding is resolved inside an instance and never between two, so a
+field's verdict is only ever attributed to the authserv-id that same field
+carries.
 
 ## resolve-canonical classifies, it never fetches or fabricates
 

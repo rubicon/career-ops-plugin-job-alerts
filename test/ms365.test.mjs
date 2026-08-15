@@ -338,10 +338,11 @@ await ta('maps a message to { id, subject, from, headers-as-object, body }', asy
   assert.equal(rec.id, 'm1');
   assert.equal(rec.subject, 'VP Marketing at Acme');
   assert.equal(rec.from, 'Indeed <alerts@indeed.com>');
-  // headers must be a plain object map, not Graph's [{name,value}] collection.
+  // headers must be a plain object map, not Graph's [{name,value}] collection,
+  // with one array of instance values under each name.
   assert.equal(Array.isArray(rec.headers), false);
   assert.equal(typeof rec.headers, 'object');
-  assert.equal(rec.headers['Authentication-Results'], 'spf=pass; dkim=pass; dmarc=pass');
+  assert.deepEqual(rec.headers['Authentication-Results'], ['spf=pass; dkim=pass; dmarc=pass']);
   assert.match(rec.body, /https:\/\/boards\.greenhouse\.io\/acme\/jobs\/m1/);
 });
 
@@ -383,15 +384,15 @@ await ta('repeated Authentication-Results all survive the mapping', async () => 
   // Graph returns the full RFC 5322 header set, in which a name may repeat: the
   // boundary stamps its own Authentication-Results and delivers whatever copies
   // the message already carried. Last-wins would destroy the field the DMARC
-  // gate has to read, so every instance is kept, newline-separated.
+  // gate has to read, so every instance is kept as its own array entry.
   const rec = await readHeaders([
-    { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' },
+    { name: 'Authentication-Results', value: 'mail.contoso.com; spf=pass; dkim=pass; dmarc=pass' },
     { name: 'Authentication-Results', value: 'compauth=pass reason=100' },
   ]);
-  const field = rec.headers['Authentication-Results'];
-  assert.match(field, /dmarc=pass/);
-  assert.match(field, /compauth=pass/);
-  assert.equal(field.split('\n').length, 2, 'the two instances are kept apart, not concatenated');
+  assert.deepEqual(rec.headers['Authentication-Results'], [
+    'mail.contoso.com; spf=pass; dkim=pass; dmarc=pass',
+    'compauth=pass reason=100',
+  ]);
 });
 
 await ta('the configured boundary field decides, whatever a repeat claims', async () => {

@@ -12,6 +12,12 @@
 // syntax carrying free diagnostic text (Google writes reason="..." routinely),
 // so anything that scans the raw field for a verdict reads prose as a result.
 //
+// And they pin the instance boundary. RFC 5322 folds a field across lines and
+// marks the continuation by leading whitespace, so an instance that opens with
+// whitespace has the shape of a continuation of the instance above it. One
+// header instance is one field: what a field asserts is only ever attributed to
+// the authserv-id that same field carries.
+//
 // Hermetic: no network, no files.
 import assert from 'node:assert/strict';
 
@@ -32,11 +38,11 @@ function t(name, fn) {
 const GOOGLE = { authservId: 'mx.google.com' };
 const UNNAMED = { authservId: null };
 
-// msg builds a message whose Authentication-Results header carries `fields`.
-// Repeated header instances are joined with "\n", the encoding the adapters use
-// when a header name occurs more than once.
+// msg builds a message whose Authentication-Results header carries `fields`,
+// one entry per header instance -- the encoding the adapters produce (see
+// lib/headers.mjs) when a header name occurs more than once.
 function msg(...fields) {
-  return { headers: { 'Authentication-Results': fields.join('\n') } };
+  return { headers: { 'Authentication-Results': fields } };
 }
 
 // -- contract: the trusted authserv-id is mandatory ------------------------
@@ -180,6 +186,24 @@ t('a boundary field carrying no dmarc result is not rescued by another copy', ()
     passesDmarc(msg('mx.google.com; spf=pass; dkim=pass', 'evil.tld; dmarc=pass'), GOOGLE),
     false,
   );
+});
+t('a continuation-shaped instance cannot borrow the boundary field authserv-id', () => {
+  // RFC 5322 marks a continuation line by the whitespace it starts with, so an
+  // instance whose value opens with whitespace looks like one. It is not: it is
+  // its own field, carrying its own (here absent) authserv-id. Folding it into
+  // the field above would read its methodspecs as the boundary's own, which is
+  // the whole verdict when the boundary field asserts no dmarc result itself.
+  assert.equal(
+    passesDmarc(msg('mx.google.com; spf=pass; dkim=pass', ' ; dmarc=pass'), GOOGLE),
+    false,
+  );
+  assert.equal(
+    passesDmarc(msg('mx.google.com; spf=pass; dkim=pass', '\t; dmarc=pass'), GOOGLE),
+    false,
+  );
+  // Same shape against a boundary field that did assert one: the injected
+  // methodspec must not join it, in either direction.
+  assert.equal(passesDmarc(msg('mx.google.com; dmarc=fail', ' ; dmarc=pass'), GOOGLE), false);
 });
 
 // -- a boundary that stamps no authserv-id (authservId: null) --------------

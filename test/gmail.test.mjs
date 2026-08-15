@@ -209,10 +209,11 @@ await ta('maps a message to { id, subject, from, headers-as-object, decoded body
   assert.equal(rec.id, 'm1');
   assert.equal(rec.subject, 'VP Marketing at Acme');
   assert.equal(rec.from, 'alerts@indeed.com');
-  // headers must be a plain object map, not Gmail's [{name,value}] array.
+  // headers must be a plain object map, not Gmail's [{name,value}] array, with
+  // one array of instance values under each name.
   assert.equal(Array.isArray(rec.headers), false);
   assert.equal(typeof rec.headers, 'object');
-  assert.equal(rec.headers['Authentication-Results'], 'mx.google.com; spf=pass; dmarc=pass');
+  assert.deepEqual(rec.headers['Authentication-Results'], ['mx.google.com; spf=pass; dmarc=pass']);
   // decoded body survived base64url decoding across parts and keeps the URL.
   assert.match(rec.body, /https:\/\/boards\.greenhouse\.io\/acme\/jobs\/m1/);
 });
@@ -278,8 +279,10 @@ await ta('a repeated Authentication-Results cannot overwrite the boundary field'
   const forgedFirst = await read(
     both('mx.google.com.evil.tld; dmarc=pass', 'mx.google.com; spf=fail; dmarc=fail'),
   );
-  assert.match(forgedFirst.headers['Authentication-Results'], /evil\.tld/);
-  assert.match(forgedFirst.headers['Authentication-Results'], /dmarc=fail/);
+  assert.deepEqual(forgedFirst.headers['Authentication-Results'], [
+    'mx.google.com.evil.tld; dmarc=pass',
+    'mx.google.com; spf=fail; dmarc=fail',
+  ]);
   assert.equal(passesDmarc(forgedFirst, options), false, 'the boundary said fail');
 
   const forgedLast = await read(
