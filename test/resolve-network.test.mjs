@@ -1006,18 +1006,23 @@ await ta(
 await ta(
   'Tier-2 hit: a board slug that carries the whole company name and adds to it is accepted',
   async () => {
-    // The name-inside-the-board direction, which the fix keeps. A board slug that
+    // The name-inside-the-board direction, which the fix keeps. A regional board that
     // carries the employer's WHOLE name and appends to it is the company's own board
     // under a longer token, and it is what separates this rule from equality -- which
     // would send a real posting to the fallback and make the containment relation
     // dead code in one of its two directions.
+    //
+    // The suffix is deliberately NOT a careers-style word. With "-careers" the
+    // furniture strip reduces the slug to the company name and the other direction
+    // admits it too, so the test would have had two ways to pass and would not have
+    // reddened when this direction was disabled alone.
     const ctx = makeCtx({
       env: TAVILY_ENV,
       routes: {
         [TAVILY_KEY]: tavilyResponse([
           {
             title: 'Job Application for VP Marketing at Acme Technologies',
-            url: 'https://boards.greenhouse.io/acmetechnologies-careers/jobs/7788',
+            url: 'https://boards.greenhouse.io/acmetechnologies-emea/jobs/7788',
             content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
             score: 0.88,
             raw_content: null,
@@ -1026,7 +1031,7 @@ await ta(
       },
     });
     const [lead] = await resolveNetwork(ctx, [tier2Lead()]);
-    assert.equal(lead.url, 'https://boards.greenhouse.io/acmetechnologies-careers/jobs/7788');
+    assert.equal(lead.url, 'https://boards.greenhouse.io/acmetechnologies-emea/jobs/7788');
     assert.equal(lead.canonical, true);
     assert.equal(lead.resolvedVia, 'tavily');
   },
