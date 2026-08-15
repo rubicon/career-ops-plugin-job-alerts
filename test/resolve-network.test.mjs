@@ -1103,29 +1103,89 @@ await ta('Tier-2 hit: a company whose own name starts with a careers word keeps 
   assert.equal(lead.resolvedVia, 'tavily');
 });
 
-await ta('Tier-2 miss: stripping the furniture does not readmit the first-word class', async () => {
-  // The strip removes furniture and nothing else. "careers-nimbusai" reduces to
-  // "nimbusai", which relates to "Nimbus Data" no better than it did before.
-  const ctx = makeCtx({
-    env: TAVILY_ENV,
-    routes: {
-      [TAVILY_KEY]: tavilyResponse([
-        {
-          title: 'VP Marketing | Nimbus AI',
-          url: 'https://boards.greenhouse.io/careers-nimbusai/jobs/7788',
-          content: 'Nimbus AI, a data infrastructure company, is hiring a VP Marketing.',
-          score: 0.9,
-          raw_content: null,
+await ta(
+  'Tier-2 miss: stripping the furniture does not readmit the rejected direction',
+  async () => {
+    // The strip removes furniture and nothing else, so a token gate 2 rejects in the
+    // name-inside-the-token direction is still rejected once the furniture is off:
+    // "careers-nimbusai" reduces to "nimbusai", which relates to "Nimbus Data" no better
+    // than it did before, in either direction. Run on a shared board and on a tenant
+    // host, because the two read the token out of different places.
+    //
+    // Deliberately NOT claimed here: that the strip cannot reach the OTHER direction. It
+    // can, and the next test says so out loud rather than leaving behind a comment
+    // asserting a safety property no input holds.
+    for (const url of [
+      'https://boards.greenhouse.io/careers-nimbusai/jobs/7788',
+      'https://careers-nimbusai.icims.com/jobs/44120/vp-marketing/job',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'VP Marketing | Nimbus AI',
+              url,
+              content: 'Nimbus AI, a data infrastructure company, is hiring a VP Marketing.',
+              score: 0.9,
+              raw_content: null,
+            },
+          ]),
         },
-      ]),
-    },
-  });
-  const [lead] = await resolveNetwork(ctx, [
-    { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
-  ]);
-  assert.equal(lead.resolvedVia, 'search-fallback');
-  assert.doesNotMatch(lead.url, /greenhouse\.io/);
-});
+      });
+      const [lead] = await resolveNetwork(ctx, [
+        { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
+      ]);
+      assert.equal(lead.resolvedVia, 'search-fallback', url);
+      assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Nimbus Data'), url);
+    }
+  },
+);
+
+await ta(
+  'Tier-2: a tenant token that stops at a word boundary of the company name is STILL accepted',
+  async () => {
+    // The residual this fix does not close, pinned so it is a decision on the record
+    // and not an assumption. "nimbus" sits inside "nimbusdata", so the
+    // token-inside-the-name direction accepts it even when it is Nimbus AI's board --
+    // and "careers-nimbus" reduces to that same token, so the furniture strip inherits
+    // it. Both resolve on origin/main as well; neither is introduced or widened here.
+    //
+    // It is the same family as the truncation #24 removed, seen from the other
+    // direction, and closing it is a separate trade: on a shared board a first-word
+    // slug is what Tier 1 already probes and VERIFIES by fetching the board, while on
+    // a tenant platform there is no probe and rejecting it would lose real postings.
+    // Filed as #29 with this reproduction.
+    //
+    // If #29 closes it, this test SHOULD go red. That is the point of it: the day the
+    // behaviour changes, the change is deliberate and visible rather than silent.
+    for (const url of [
+      'https://boards.greenhouse.io/nimbus/jobs/7788',
+      'https://boards.greenhouse.io/careers-nimbus/jobs/7788',
+    ]) {
+      const ctx = makeCtx({
+        env: TAVILY_ENV,
+        routes: {
+          [TAVILY_KEY]: tavilyResponse([
+            {
+              title: 'Job Application for VP Marketing at Nimbus',
+              url,
+              content:
+                'Nimbus is a data infrastructure company hiring a VP Marketing to lead brand.',
+              score: 0.9,
+              raw_content: null,
+            },
+          ]),
+        },
+      });
+      const [lead] = await resolveNetwork(ctx, [
+        { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
+      ]);
+      assert.equal(lead.url, url, url);
+      assert.equal(lead.resolvedVia, 'tavily', url);
+    }
+  },
+);
 
 await ta('a company with no token long enough to corroborate never reaches Tavily', async () => {
   // "3M Co" leaves nothing usable: "co" is legal-entity noise and "3m" is too short
