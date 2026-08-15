@@ -293,6 +293,121 @@ t('resolve-canonical flags an unknown host needs-canonical', () => {
   assert.equal(r.canonical, false);
   assert.equal(r.status, 'needs-canonical');
 });
+t('resolve-canonical marks an employer tenant platform canonical (#22)', () => {
+  // Workday and iCIMS were excluded because Tier 1 cannot PROBE their per-tenant
+  // hosts, which is a fact about the ATS APIs, not about the URL. A lead that
+  // already points at one is an employer-canonical posting and must not be sent
+  // round the network only to come back as a search fallback.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/VP-Marketing_JR-10423',
+    'https://careers-acmetech.icims.com/jobs/44120/vp-marketing/job',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, true, url);
+    assert.equal(r.status, 'canonical', url);
+  }
+});
+t('resolve-canonical keeps a lookalike tenant-platform domain needs-canonical', () => {
+  // The `$` anchor on the family pattern is what keeps a mirror out. The second url
+  // is the one that actually tests it: the first carries no posting id, so once the
+  // family row started requiring one it would be rejected by that requirement even
+  // on a host the anchor was no longer excluding -- a guard passing for someone
+  // else's reason looks exactly like a guard that works.
+  for (const url of [
+    'https://myworkdayjobs.com.mirror.example/acme/job/1',
+    'https://myworkdayjobs.com.mirror.example/en-US/Acme_Careers/job/Dallas-TX/VP-Marketing_JR-10423',
+    'https://icims.com.mirror.example/jobs/44120/vp-marketing/job',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+    assert.equal(r.status, 'needs-canonical', url);
+  }
+});
+t('resolve-canonical keeps a tenant-platform LISTING needs-canonical (#22)', () => {
+  // The family row for Workday and iCIMS declares `postingPath: true` precisely
+  // because these platforms serve prominent index and faceted-search URLs beside
+  // their postings. Classifying by host alone made every one of them canonical,
+  // which short-circuits all network resolution and emits a listing that outlives
+  // the role it was showing -- and contradicted the resolver, which applies the
+  // same row's posting-id requirement to the identical URL shapes.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/2026-Internships',
+    'https://careers-acmetech.icims.com/jobs/search?ss=1',
+    'https://careers-acmetech.icims.com/jobs/search/1250',
+    'https://www.icims.com/products',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+    assert.equal(r.status, 'needs-canonical', url);
+  }
+});
+t('resolve-canonical reads a listing word inside a segment, not only as a whole one', () => {
+  // The listing vocabulary was compared against whole segments only, so every
+  // hyphenated, underscored, or camel-joined form of the same words fell through
+  // and the facet number was read as a requisition id. A page or offset number is
+  // indistinguishable from a requisition id by shape -- the path is what decides it.
+  //
+  // `/browse-marketing/4400` is deliberately NOT here. It has the same shape as
+  // `/search-engineer/44120` -- vocabulary word plus an ordinary noun, beside a
+  // number -- and nothing in a URL separates the two. It is left where it was.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/search-results/4400',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/SearchResults/4400',
+    'https://careers-acmetech.icims.com/jobs/page-1250',
+    'https://careers-acmetech.icims.com/jobs/offset-1250',
+    'https://careers-acmetech.icims.com/jobs/all-openings/1250',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+    assert.equal(r.status, 'needs-canonical', url);
+  }
+});
+t('resolve-canonical keeps a posting whose role name contains a listing word', () => {
+  // The other direction, and the one that keeps this from being a rule that rejects
+  // everything. "Search Engineer", "Paid Search Manager" and "Results Analyst" are
+  // roles, and both verified vendor grammars put a real role name in a path segment.
+  // A segment made of NOTHING BUT these words names a surface; a segment carrying a
+  // word that is not one of them is naming a thing, and the requisition id in the
+  // same path says which posting it is. Position within the segment is not the test:
+  // the role word can lead or trail the slug as readily as it can sit inside it.
+  for (const url of [
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Paid-Search-Manager_JR-10423',
+    'https://acmetech.wd5.myworkdayjobs.com/en-US/AcmeTech_Careers/job/Dallas-TX/Search-Engineer_JR-10423',
+    'https://careers-acmetech.icims.com/jobs/44120/paid-search-manager/job',
+    'https://careers-acmetech.icims.com/jobs/44120/search-engineer/job',
+    'https://careers-acmetech.icims.com/jobs/44120/results-analyst/job',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, true, url);
+    assert.equal(r.status, 'canonical', url);
+  }
+});
+t('resolve-canonical needs the posting id in a path the vendor actually publishes', () => {
+  // Both verified grammars put the id inside a multi-segment path
+  // (/en-US/{site}/job/{location}/{Role}_{id}, /jobs/{id}/{slug}/job). A bare
+  // numeric path is a shape neither vendor publishes, so it is not read as a
+  // posting on the strength of its digits alone.
+  for (const url of [
+    'https://careers-acmetech.icims.com/44120',
+    'https://acmetech.wd5.myworkdayjobs.com/10423',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, false, url);
+  }
+});
+t('resolve-canonical still needs no posting id on a shared board (#22)', () => {
+  // Only the families that declare `postingPath` carry the requirement. A shared
+  // board serves postings and little else, and Lever's are opaque UUIDs, so
+  // applying it globally would regress the class this plugin started with.
+  for (const url of [
+    'https://jobs.lever.co/acme/a1b2c3d4-e5f6',
+    'https://boards.greenhouse.io/acme',
+  ]) {
+    const r = resolveCanonical({ url });
+    assert.equal(r.canonical, true, url);
+  }
+});
 
 // -- stage: dedup ---------------------------------------------------------
 t('dedup collapses www and trailing-slash variants of the same url', () => {
@@ -337,6 +452,34 @@ t('buildJobs never emits an unresolved lead still pointing at its tracker (#8)',
   for (const job of jobs) {
     assert.doesNotMatch(job.url, /indeed\.com/, 'the tracker url is never emitted');
   }
+});
+t('buildJobs emits a resolved employer-hosted posting (#22)', () => {
+  // The third emit-eligible class: a posting on the employer's own site that Tier 2
+  // resolved and vouched for. It is named explicitly rather than admitted by
+  // widening `canonical`, so an unresolved lead still cannot slip through.
+  const jobs = buildJobs([
+    {
+      title: 'VP Marketing',
+      url: 'https://careers.acmetechnologies.com/jobs/vp-marketing',
+      company: 'Acme Technologies',
+      canonical: false,
+      employerCanonical: true,
+    },
+  ]);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].url, 'https://careers.acmetechnologies.com/jobs/vp-marketing');
+});
+t('buildJobs still drops an unresolved lead after the #22 widening', () => {
+  const jobs = buildJobs([
+    {
+      title: 'VP Marketing',
+      url: 'https://click.indeed.com/redirect?jk=AAA',
+      canonical: false,
+      employerCanonical: false,
+    },
+    { title: 'VP Marketing', url: 'https://click.indeed.com/redirect?jk=BBB', canonical: false },
+  ]);
+  assert.deepEqual(jobs, [], 'widening the contract did not open a path for the tracker');
 });
 
 // -- ingest wiring against the fake in-memory MailSource ------------------

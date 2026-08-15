@@ -35,10 +35,15 @@ destination.
   Ashby) probed by public API, then, when `TAVILY_API_KEY` is set, a Tavily search
   for the posting those probes missed. A lead neither tier can pin down gets a live
   `{company, title}` search URL, never the dead tracking link. Tier 2 prefers that
-  fallback over a confident-but-wrong hit: it accepts a search result only on a
-  canonical ATS host, with a board slug relatable to the company, the company named
-  in the result, a role title clearing the same threshold Tier 1 uses, and no
-  runner-up tied with it.
+  fallback over a confident-but-wrong hit, since a wrong link looks correct while a
+  search URL is visibly a search. It accepts a result on a shared ATS board, on an
+  employer's Workday or iCIMS tenant, or on the employer's own careers domain -- but
+  only when the URL is tied to that employer by something other than the search
+  ranking itself, the URL denotes one posting rather than a listings page, the
+  company is named in the result, the role clears a title threshold, and no runner-up
+  ties it. The weaker the host evidence, the more of the rest is demanded: a bespoke
+  employer domain must match the company name exactly, account for every word of it,
+  and clear a higher title bar than an ATS host does.
 - Returns `Job[]` (`title`, `url`, `company`, `location`). It is human-in-the-loop
   and never submits anything anywhere.
 

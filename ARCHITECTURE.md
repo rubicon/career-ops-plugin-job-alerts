@@ -111,7 +111,7 @@ it is instead of resolving to anything the gate would act on.
 Verdicts are parsed, never searched for. Comments in parentheses (which nest) and
 quoted strings are legal syntax carrying free diagnostic text (`reason="..."` is
 routine), so both are stripped before the field is split on `;` and the `dmarc`
-methodspec is read anchored at the start of its own part — which is what keeps a
+methodspec is read anchored at the start of its own part -- which is what keeps a
 `reason=dmarc=pass` property hanging off a _failing_ `spf` methodspec from being
 read as DMARC's own result. Conflicting verdicts do not vote: any non-pass from
 the boundary rejects the message.
@@ -135,12 +135,29 @@ carries.
 ## resolve-canonical classifies, it never fetches or fabricates
 
 Canonical resolution lives in this plugin (it is not shared). `resolve-canonical.mjs`
-only classifies: it marks a lead `canonical` when its host is a known applicant
-tracking system (Greenhouse, Lever, Ashby) and otherwise `needs-canonical`. Workday
-is intentionally excluded because its hosts are dynamic per tenant. It exports
-`ATS_HOST_RE` so the network resolver tests candidate URLs against this one
-definition of "canonical" rather than a second copy that could drift. This module
-never fetches, never fabricates a URL, and never keeps a dead tracking link.
+only classifies: it marks a lead `canonical` when its host belongs to a known
+posting-host family and otherwise `needs-canonical`. Two kinds of family, because
+the resolver has to treat them differently:
+
+- **shared boards** (Greenhouse, Lever, Ashby) -- the employer registers a slug and
+  the vendor serves every posting under it, so the first path segment identifies the
+  employer and every URL on the board is a posting;
+- **per-employer tenants** (Workday, iCIMS) -- the employer's name is a host label,
+  and the platform also serves index and faceted-search URLs, so a posting has to be
+  told apart from a listing by its path.
+
+Workday and iCIMS have no Tier-1 probe, because their per-tenant hosts cannot be
+enumerated in `manifest.allowedHosts`. That bars probing them, not recognizing them:
+a Workday posting URL is as canonical as a Greenhouse one, and classifying it
+otherwise sent a perfectly good posting round the network to come back as a search
+fallback. Their family rows declare `postingPath`, and the classifier applies it: a
+tenant index or faceted search is _not_ canonical on the strength of its host, since
+a job alert links to "see all jobs" and to saved searches as readily as to a posting,
+and marking one canonical short-circuits every resolution tier and emits a listing
+that outlives the role it was showing. The module exports `CANONICAL_HOST_FAMILIES` /
+`canonicalHostFamily` and the posting-shape predicates so the network resolver decides
+against this one definition of "canonical" rather than a second copy that could drift.
+It never fetches, never fabricates a URL, and never keeps a dead tracking link.
 
 The network resolution tiers are I/O and live in `resolve-network.mjs`:
 
@@ -148,19 +165,53 @@ The network resolution tiers are I/O and live in `resolve-network.mjs`:
   guessed from the company name, and takes the posting whose title uniquely clears
   a symmetric Jaccard threshold.
 - **Tier 2** runs only for a lead Tier 1 missed, and only when `TAVILY_API_KEY` is
-  set. It POSTs to the Tavily Search API and accepts a result only when all of the
-  following hold: the host matches `ATS_HOST_RE`; the board slug in the path is
-  relatable to the company; the company's tokens appear in the result title or
-  snippet; the role clears Tier 1's title threshold once page boilerplate and the
-  company name are stripped; and no other result ties it. Tavily's own `score` is
-  not a gate, because the API docs define neither a range nor a threshold for it.
+  set. It POSTs to the Tavily Search API and accepts a result only when every gate
+  below holds. Tavily's own `score` is not a gate, because the API docs define
+  neither a range nor a threshold for it.
 - **Fallback** is a live `{company, title}` search URL.
 
-A wrong canonical URL is worse than none, since it looks correct to the reader, so
-every ambiguous case falls through to the fallback. Tier 2 deliberately does not
-surface employer-hosted careers pages (Workday, iCIMS, bespoke sites): they cannot
-be verified as a posting, and marking one `canonical` would contradict
-`resolve-canonical.mjs`.
+A wrong canonical URL is worse than none, since it looks correct to the reader,
+whereas a search URL is visibly a search. Every ambiguous case therefore falls
+through to the fallback. Tier 2 accepts three classes, each tied to the employer by
+something other than the search ranking that produced it -- since the ranking is the
+very thing under test -- and the weaker the host evidence, the more corroboration is
+demanded:
+
+|                    | shared board                     | tenant platform                    | employer domain                                      |
+| ------------------ | -------------------------------- | ---------------------------------- | ---------------------------------------------------- |
+| identity           | vendor host + board slug in path | vendor host + tenant in host label | domain label **is** the whole company name           |
+| employer test      | slug relatable to company        | tenant relatable to company        | equality, on a host shape recognized as registrable  |
+| posting vs listing | every board URL is a posting     | posting id required in path        | job-word host or path, and a role slug or posting id |
+| corroboration      | two company tokens               | two company tokens                 | **every** company token                              |
+| title threshold    | 0.6                              | 0.6                                | **0.75**                                             |
+| emitted as         | `canonical`                      | `canonical`                        | `employerCanonical`                                  |
+
+A host-classified result wins over an employer-domain one whenever both clear their
+gates, so the stronger evidence decides and the lead carries `canonical` wherever it
+honestly can.
+
+The employer-domain label must equal a slug built from the **whole** company name --
+`acmetechnologies.com` or `acme-technologies.com` for "Acme Technologies", never a
+truncation of it. `candidateSlugs` also offers the first word, because Tier 1 needs
+it to _probe_ a board and a wrong guess there costs a 404; on a domain the same guess
+is emitted to the reader as the employer's own site, so it is not offered here. A
+**one-word company is declined outright**: for "Nova" the full-name form is "nova",
+so the rule is satisfied by construction -- but then identity ("is the label the
+company's name") and corroboration ("does every company token appear") are the same
+single-token test, the defence in depth collapses, and a one-word label on a global
+namespace is exactly what an unrelated registrant of that word holds. A length floor
+on the label or a TLD allowlist would be an invented threshold, so that class keeps
+the fallback.
+
+What Tier 2 still declines, deliberately, keeping the search fallback: an employer
+domain whose label is only _similar_ to the company name (`acmetech.com` for "Acme
+Technologies") or only its first word (`acme.tk`), because a relation short of
+equality on a global namespace is how a confident wrong employer gets emitted; a host
+shape not recognized as a registrable domain, since this is an allowlist of shapes
+and deliberately not a public-suffix list; a role-scoped listing (`/vp-marketing-jobs`),
+a faceted search, and a path segment dated by a calendar year rather than identified
+by a requisition id; and any vendor whose tenant location and posting-URL shape have
+not been verified from that vendor's own material.
 
 ## Data flow
 
