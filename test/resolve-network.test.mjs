@@ -2028,6 +2028,119 @@ await ta('Tier-2 hit: a posting id in the final segment still names one posting'
   assert.equal(lead.resolvedVia, 'tavily-employer');
 });
 
+// -- a tie in the STRONGER class is ambiguity, not a licence to drop a class --
+//
+// "No vendor host cleared the gates" and "vendor hosts cleared but tied" are
+// different states, and returning null for both let the second one promote a
+// weaker-evidence bespoke result. A tie means we cannot tell which of these is
+// right; the class below is not a tie-breaker for the class above it.
+
+await ta('Tier-2 miss: two tied vendor-hosted results fall back, not down a class', async () => {
+  const bespoke = 'https://careers.acmetechnologies.com/jobs/vp-marketing';
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.9,
+          raw_content: null,
+        },
+        {
+          title: 'Job Application for VP Marketing at Acme Technologies',
+          url: 'https://boards.greenhouse.io/acmetech/jobs/7789',
+          content: 'Acme Technologies is hiring a VP Marketing.',
+          score: 0.9,
+          raw_content: null,
+        },
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url: bespoke,
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.88,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.notEqual(lead.url, bespoke, 'a tie above must not promote the class below');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
+await ta(
+  'Tier-2 hit: a clear vendor-hosted winner beside a bespoke result still wins',
+  async () => {
+    // The control for the test above: the fallback there comes from the TIE, not from
+    // the mere presence of two vendor-hosted results. One of them scoring higher
+    // resolves exactly as before.
+    const ctx = makeCtx({
+      env: TAVILY_ENV,
+      routes: {
+        [TAVILY_KEY]: tavilyResponse([
+          {
+            title: 'Job Application for VP Marketing at Acme Technologies',
+            url: 'https://boards.greenhouse.io/acmetech/jobs/7788',
+            content: 'Acme Technologies is hiring a VP Marketing.',
+            score: 0.9,
+            raw_content: null,
+          },
+          {
+            title: 'Job Application for VP Marketing Manager at Acme Technologies',
+            url: 'https://boards.greenhouse.io/acmetech/jobs/7789',
+            content: 'Acme Technologies is hiring a VP Marketing Manager.',
+            score: 0.9,
+            raw_content: null,
+          },
+          {
+            title: 'VP Marketing | Careers at Acme Technologies',
+            url: 'https://careers.acmetechnologies.com/jobs/vp-marketing',
+            content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+            score: 0.88,
+            raw_content: null,
+          },
+        ]),
+      },
+    });
+    const [lead] = await resolveNetwork(ctx, [employerLead()]);
+    assert.equal(lead.url, 'https://boards.greenhouse.io/acmetech/jobs/7788');
+    assert.equal(lead.canonical, true);
+    assert.equal(lead.resolvedVia, 'tavily');
+  },
+);
+
+await ta('Tier-2 miss: two tied bespoke results fall back as well', async () => {
+  // The same rule in the weaker class, which had it already: it is stated here so
+  // the two classes cannot drift apart again.
+  const ctx = makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url: 'https://careers.acmetechnologies.com/jobs/vp-marketing',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.9,
+          raw_content: null,
+        },
+        {
+          title: 'VP Marketing | Careers at Acme Technologies',
+          url: 'https://acmetechnologies.com/careers/vp-marketing',
+          content: 'Acme Technologies is hiring a VP Marketing to lead brand and demand.',
+          score: 0.9,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [employerLead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback');
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Acme Technologies'));
+});
+
 // -- optional live integration (skipped unless RUN_LIVE_ATS is set) -------
 await ta('live: real ATS round-trip (skipped without RUN_LIVE_ATS)', async () => {
   if (!process.env.RUN_LIVE_ATS) {
