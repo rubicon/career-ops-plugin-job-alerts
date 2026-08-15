@@ -1858,6 +1858,10 @@ const LISTING_PATH_FORMS = [
   'https://acmetechnologies.com/jobs/page-1250',
   'https://acmetechnologies.com/jobs/offset-1250',
   'https://careers.acmetechnologies.com/vp-marketing/page-2',
+  'https://careers.acmetechnologies.com/vp-marketing-page-2',
+  'https://careers.acmetechnologies.com/vp-marketing-page-250',
+  'https://acmetechnologies.com/jobs/page-2/vp-marketing',
+  'https://acmetechnologies.com/jobs/offset-40/vp-marketing',
   // joined without a hyphen: an underscore, and a camel-case boundary
   'https://acmetechnologies.com/jobs/vp_marketing_search',
   'https://careers.acmetechnologies.com/SearchResults/VP-Marketing',
