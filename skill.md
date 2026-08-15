@@ -38,14 +38,15 @@ with no role filter of its own.
 Set these under `plugins.job-alerts` in `config/plugins.yml`; they arrive as
 `ctx.settings`:
 
-| Setting      | Values                   | Default  | Meaning                                            |
-| ------------ | ------------------------ | -------- | -------------------------------------------------- |
-| `source`     | `gmail` or `ms365`       | (none)   | Which mailbox adapter to use.                      |
-| `sinceDays`  | positive integer         | `14`     | How far back to read messages.                     |
-| `sender`     | string or list of string | (none)   | Optional. Restrict to one or more `from:` senders. |
-| `maxResults` | positive integer         | `100`    | Page size for the message list.                    |
-| `maxPages`   | positive integer         | `25`     | Page cap; exceeding it fails loud.                 |
-| `tenant`     | string                   | `common` | `ms365` only. Azure AD tenant for the token grant. |
+| Setting      | Values                   | Default      | Meaning                                            |
+| ------------ | ------------------------ | ------------ | -------------------------------------------------- |
+| `source`     | `gmail` or `ms365`       | (none)       | Which mailbox adapter to use.                      |
+| `sinceDays`  | positive integer         | `14`         | How far back to read messages.                     |
+| `sender`     | string or list of string | (none)       | Optional. Restrict to one or more `from:` senders. |
+| `maxResults` | positive integer         | `100`        | Page size for the message list.                    |
+| `maxPages`   | positive integer         | `25`         | Page cap; exceeding it fails loud.                 |
+| `tenant`     | string                   | `common`     | `ms365` only. Azure AD tenant for the token grant. |
+| `authservId` | string                   | (per source) | The authserv-id your receiving mail boundary uses. |
 
 `source` is required; a missing or unknown value fails with a clear error that
 lists the known sources. `sender` narrows the search to specific alert addresses:
@@ -55,6 +56,16 @@ tune paging for either adapter; the full window is read across pages, and hittin
 `maxResults` is clamped to the 1-1000 page size Microsoft Graph documents for the
 messages endpoint. `tenant` accepts `common`, `organizations`, `consumers`, or a
 tenant id; leave it unset for a personal outlook.com mailbox.
+
+`authservId` almost never needs setting. The DMARC gate accepts a verdict only
+from the `Authentication-Results` field your receiving mail boundary stamped —
+that is the one field a sender cannot forge, because RFC 7601 requires the
+boundary to strip inbound copies bearing its own name — so it needs to know that
+name. `gmail` defaults to `mx.google.com`. `ms365` defaults to reading the field
+that carries no name at all, which is the header format Microsoft documents; if
+your mail reaches the mailbox through a hybrid or third-party gateway that does
+stamp one, set `authservId` to it. A message whose boundary field is missing,
+ambiguous, or says anything other than `dmarc=pass` is skipped.
 
 ## Required environment variables
 

@@ -23,7 +23,9 @@ destination.
 - Reads from **Gmail or Microsoft 365** through a source-adapter seam (IMAP is
   deferred, since a raw socket does not fit the HTTPS-only plugin sandbox).
 - **Verifies sender authenticity** with a DMARC fail-closed gate, so spoofed or
-  unauthenticated mail is skipped.
+  unauthenticated mail is skipped. The verdict is taken only from the
+  `Authentication-Results` field your receiving mail boundary stamped (RFC 7601),
+  never from a copy the message arrived carrying.
 - **Extracts** every posting it finds, with no role filter of its own: the alert
   subscription and career-ops's own downstream pipeline evaluate already narrow
   what you see. Primary path is a small LLM call (`claude-haiku-4-5-20251001`)

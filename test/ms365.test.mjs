@@ -15,8 +15,12 @@
 // present and is skipped otherwise, so CI stays zero-network.
 import assert from 'node:assert/strict';
 
-import { create, requiredEnv } from '../lib/sources/ms365.mjs';
+import { create, requiredEnv, trustedAuthservId } from '../lib/sources/ms365.mjs';
 import { passesDmarc } from '../lib/dmarc.mjs';
+
+// The gate options this adapter's own declaration produces, so these tests
+// exercise the real default rather than a literal restated here.
+const DEFAULT_GATE = { authservId: trustedAuthservId };
 
 let pass = 0;
 let fail = 0;
@@ -129,6 +133,20 @@ function getFixture(
   };
   if (!omitHeaders) json.internetMessageHeaders = internetMessageHeaders;
   return { json };
+}
+
+// readHeaders drives the adapter over one message carrying exactly the given
+// internetMessageHeaders collection, and returns the mapped record.
+async function readHeaders(headers) {
+  const ctx = makeCtx({
+    routes: {
+      [TOKEN_PATH]: tokenOk(),
+      [`${LIST_PATH}/m1`]: getFixture('m1', { headers }),
+      [LIST_PATH]: { json: { value: [{ id: 'm1' }] } },
+    },
+  });
+  const [rec] = await create(ctx).listMessages(14);
+  return rec;
 }
 
 // Read the $filter of a captured list call.
@@ -350,30 +368,61 @@ await ta('the mapped headers object satisfies the real DMARC gate', async () => 
   });
   const recs = await create(ctx).listMessages(14);
   const byId = Object.fromEntries(recs.map((r) => [r.id, r]));
-  assert.equal(passesDmarc(byId.pass1), true, 'dmarc=pass survives into headers');
-  assert.equal(passesDmarc(byId.fail1), false, 'dmarc=fail is rejected by the gate');
+  assert.equal(passesDmarc(byId.pass1, DEFAULT_GATE), true, 'dmarc=pass survives into headers');
+  assert.equal(passesDmarc(byId.fail1, DEFAULT_GATE), false, 'dmarc=fail is rejected by the gate');
 });
 
-await ta('repeated header names are all preserved, not overwritten', async () => {
-  // Graph returns the full RFC5322 header set, where Authentication-Results and
-  // Received legitimately repeat. Last-wins would let a hop that says nothing
-  // about DMARC shadow the one asserting dmarc=pass.
-  const ctx = makeCtx({
-    routes: {
-      [TOKEN_PATH]: tokenOk(),
-      [`${LIST_PATH}/m1`]: getFixture('m1', {
-        headers: [
-          { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' },
-          { name: 'Authentication-Results', value: 'compauth=pass reason=100' },
-        ],
-      }),
-      [LIST_PATH]: { json: { value: [{ id: 'm1' }] } },
-    },
-  });
-  const [rec] = await create(ctx).listMessages(14);
-  assert.match(rec.headers['Authentication-Results'], /dmarc=pass/);
-  assert.match(rec.headers['Authentication-Results'], /compauth=pass/);
-  assert.equal(passesDmarc(rec), true, 'the dmarc=pass assertion is not shadowed');
+await ta('the adapter declares no authserv-id, because Microsoft publishes none', async () => {
+  // The documented Exchange Online header opens straight into `spf=`, with no
+  // authserv-id ahead of it, so there is no name to match on by default. A
+  // tenant whose boundary does stamp one sets the `authservId` setting.
+  assert.equal(trustedAuthservId, null);
+});
+
+await ta('repeated Authentication-Results all survive the mapping', async () => {
+  // Graph returns the full RFC 5322 header set, in which a name may repeat: the
+  // boundary stamps its own Authentication-Results and delivers whatever copies
+  // the message already carried. Last-wins would destroy the field the DMARC
+  // gate has to read, so every instance is kept, newline-separated.
+  const rec = await readHeaders([
+    { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' },
+    { name: 'Authentication-Results', value: 'compauth=pass reason=100' },
+  ]);
+  const field = rec.headers['Authentication-Results'];
+  assert.match(field, /dmarc=pass/);
+  assert.match(field, /compauth=pass/);
+  assert.equal(field.split('\n').length, 2, 'the two instances are kept apart, not concatenated');
+});
+
+await ta('the configured boundary field decides, whatever a repeat claims', async () => {
+  // Two Authentication-Results with conflicting verdicts: one from the
+  // configured receiving boundary, one from an authserv-id that is not it (and
+  // that merely contains its name). Only the boundary's own field can be
+  // attributed to the receiver, so its verdict stands in both directions and
+  // position never decides.
+  const gate = { authservId: 'mail.contoso.com' };
+
+  const boundaryFails = await readHeaders([
+    { name: 'Authentication-Results', value: 'mail.contoso.com; spf=fail; dmarc=fail' },
+    { name: 'Authentication-Results', value: 'mail.contoso.com.evil.tld; dmarc=pass' },
+  ]);
+  assert.equal(passesDmarc(boundaryFails, gate), false, 'a repeat cannot overturn a fail');
+
+  const boundaryPasses = await readHeaders([
+    { name: 'Authentication-Results', value: 'evil.tld; dmarc=fail' },
+    { name: 'Authentication-Results', value: 'mail.contoso.com; spf=pass; dmarc=pass' },
+  ]);
+  assert.equal(passesDmarc(boundaryPasses, gate), true, 'a repeat cannot suppress a pass');
+});
+
+await ta('two unnamed Authentication-Results are ambiguous and fail closed', async () => {
+  // With no authserv-id to match on, nothing separates the boundary's own field
+  // from a second copy that also omits one, so the gate refuses to guess.
+  const rec = await readHeaders([
+    { name: 'Authentication-Results', value: 'spf=fail; dkim=fail; dmarc=fail' },
+    { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' },
+  ]);
+  assert.equal(passesDmarc(rec, DEFAULT_GATE), false);
 });
 
 await ta('a message with no internetMessageHeaders fails the DMARC gate closed', async () => {
@@ -386,7 +435,7 @@ await ta('a message with no internetMessageHeaders fails the DMARC gate closed',
   });
   const [rec] = await create(ctx).listMessages(14);
   assert.deepEqual(rec.headers, {}, 'headers is an empty map, never undefined');
-  assert.equal(passesDmarc(rec), false);
+  assert.equal(passesDmarc(rec, DEFAULT_GATE), false);
 });
 
 // -- pagination -----------------------------------------------------------

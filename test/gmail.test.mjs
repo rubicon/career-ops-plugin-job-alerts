@@ -9,7 +9,7 @@
 // present and is skipped otherwise, so CI stays zero-network.
 import assert from 'node:assert/strict';
 
-import { create, requiredEnv } from '../lib/sources/gmail.mjs';
+import { create, requiredEnv, trustedAuthservId } from '../lib/sources/gmail.mjs';
 import { passesDmarc } from '../lib/dmarc.mjs';
 
 let pass = 0;
@@ -234,8 +234,58 @@ await ta('the mapped headers object satisfies the real DMARC gate', async () => 
   });
   const recs = await create(ctx).listMessages(14);
   const byId = Object.fromEntries(recs.map((r) => [r.id, r]));
-  assert.equal(passesDmarc(byId.pass1), true, 'dmarc=pass survives into headers');
-  assert.equal(passesDmarc(byId.fail1), false, 'dmarc=fail is rejected by the gate');
+  const options = { authservId: trustedAuthservId };
+  assert.equal(passesDmarc(byId.pass1, options), true, 'dmarc=pass survives into headers');
+  assert.equal(passesDmarc(byId.fail1, options), false, 'dmarc=fail is rejected by the gate');
+});
+
+await ta('the declared authserv-id is the Gmail receiving boundary', async () => {
+  assert.equal(trustedAuthservId, 'mx.google.com');
+});
+
+await ta('a repeated Authentication-Results cannot overwrite the boundary field', async () => {
+  // Gmail returns the full RFC 5322 header set, in which a name may repeat: the
+  // boundary stamps its own Authentication-Results and delivers whatever copies
+  // the message already carried. Every instance must survive the mapping, or the
+  // gate cannot find the one that counts -- and the verdict must come from that
+  // one whichever position it lands in.
+  const both = (first, second) => ({
+    json: {
+      id: 'm1',
+      payload: {
+        headers: [
+          { name: 'Subject', value: 'VP Marketing at Acme' },
+          { name: 'Authentication-Results', value: first },
+          { name: 'Authentication-Results', value: second },
+        ],
+        body: { data: toB64Url('https://boards.greenhouse.io/acme/jobs/m1') },
+      },
+    },
+  });
+  const read = async (fixture) => {
+    const ctx = makeCtx({
+      routes: {
+        [TOKEN_URL]: tokenOk(),
+        [`${LIST_PATH}/m1`]: fixture,
+        [LIST_PATH]: { json: { messages: [{ id: 'm1' }] } },
+      },
+    });
+    const [rec] = await create(ctx).listMessages(14);
+    return rec;
+  };
+  const options = { authservId: trustedAuthservId };
+
+  const forgedFirst = await read(
+    both('mx.google.com.evil.tld; dmarc=pass', 'mx.google.com; spf=fail; dmarc=fail'),
+  );
+  assert.match(forgedFirst.headers['Authentication-Results'], /evil\.tld/);
+  assert.match(forgedFirst.headers['Authentication-Results'], /dmarc=fail/);
+  assert.equal(passesDmarc(forgedFirst, options), false, 'the boundary said fail');
+
+  const forgedLast = await read(
+    both('mx.google.com; spf=pass; dmarc=pass', 'evil.tld; dmarc=fail'),
+  );
+  assert.equal(passesDmarc(forgedLast, options), true, 'the boundary said pass');
 });
 
 // -- pagination -----------------------------------------------------------

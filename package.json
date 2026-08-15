@@ -26,7 +26,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node test/smoke.mjs && node test/index.test.mjs && node test/gmail.test.mjs && node test/ms365.test.mjs && node test/resolve-network.test.mjs && node test/extract-llm.test.mjs",
+    "test": "node test/smoke.mjs && node test/index.test.mjs && node test/dmarc.test.mjs && node test/gmail.test.mjs && node test/ms365.test.mjs && node test/resolve-network.test.mjs && node test/extract-llm.test.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
