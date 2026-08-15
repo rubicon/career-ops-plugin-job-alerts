@@ -9,6 +9,7 @@ import {
   validateSourceEnv,
   createSource,
   trustedAuthservIdFor,
+  declaredAuthservId,
 } from '../lib/sources/registry.mjs';
 import { passesDmarc } from '../lib/dmarc.mjs';
 import { extractLeads } from '../lib/extract.mjs';
@@ -176,16 +177,33 @@ t('createSource(unknown) throws', () => {
 t('gmail declares the authserv-id its receiving boundary stamps', () => {
   assert.equal(trustedAuthservIdFor('gmail', {}), 'mx.google.com');
 });
-t('ms365 declares no authserv-id, since Microsoft publishes none', () => {
-  assert.equal(trustedAuthservIdFor('ms365', {}), null);
+t('ms365 has no default, so it refuses to run until the setting names one', () => {
+  // Microsoft publishes no authserv-id for Exchange Online, and an unnamed
+  // Authentication-Results field is one any sender can write. Rather than trust
+  // one, or drop every message and look like an empty mailbox, the source
+  // refuses with an error naming the setting that resolves it.
+  assert.throws(() => trustedAuthservIdFor('ms365', {}), /authservId/);
+  assert.throws(() => trustedAuthservIdFor('ms365', {}), /ms365/);
 });
 t('an authservId setting overrides the adapter default for either source', () => {
   const ctx = { settings: { authservId: 'mail.contoso.com' } };
   assert.equal(trustedAuthservIdFor('ms365', ctx), 'mail.contoso.com');
   assert.equal(trustedAuthservIdFor('gmail', ctx), 'mail.contoso.com');
 });
+t('a blank or whitespace-only authservId setting is not a configured id', () => {
+  assert.equal(trustedAuthservIdFor('gmail', { settings: { authservId: '  ' } }), 'mx.google.com');
+  assert.throws(() => trustedAuthservIdFor('ms365', { settings: { authservId: '  ' } }), /ms365/);
+});
 t('trustedAuthservIdFor rejects an unknown source', () => {
   assert.throws(() => trustedAuthservIdFor('imap', {}), /imap/);
+});
+t('an adapter that declares no trustedAuthservId is a plugin bug, not a weak default', () => {
+  // The declaration is the seam that tells the gate which field to believe. A
+  // module that omits it, or misspells it, must fail as the plugin bug it is
+  // rather than resolve to anything the gate would act on.
+  assert.throws(() => declaredAuthservId('gmail', {}), /trustedAuthservId/);
+  assert.throws(() => declaredAuthservId('gmail', { trustedAuthservID: 'mx.google.com' }), /gmail/);
+  assert.equal(declaredAuthservId('gmail', { trustedAuthservId: null }), null);
 });
 t('the declared gmail boundary id admits a real verdict and nothing else', () => {
   const authservId = trustedAuthservIdFor('gmail', {});
@@ -356,6 +374,41 @@ await ta('runIngest wires the selected source through the core to Job[]', async 
   assert.ok(dropped, `the skipped message is logged; got ${JSON.stringify(logs)}`);
   assert.match(dropped, /mx\.google\.com/, 'the log names the boundary the verdict must come from');
   assert.match(dropped, /authservId/, 'and points at the setting that changes it');
+});
+
+await ta('runIngest refuses to open the mailbox with no boundary id to trust', async () => {
+  // ms365 has no default authserv-id, so a run with the setting unset cannot
+  // attribute any verdict. That has to stop the run before the mailbox is read:
+  // reading it and then failing every message would spend the network round
+  // trips only to look like an empty inbox.
+  let listed = false;
+  const fake = {
+    async listMessages() {
+      listed = true;
+      return [];
+    },
+  };
+  const ctx = { settings: { source: 'ms365' }, env: MS365_ENV };
+  await assert.rejects(() => runIngest(ctx, { createSource: () => fake }), /authservId/);
+  assert.equal(listed, false, 'the mailbox is never listed');
+});
+
+await ta('runIngest runs ms365 once the authservId setting names the boundary', async () => {
+  const fake = createFakeSource([
+    {
+      id: 'a',
+      subject: 'VP Marketing at Acme',
+      from: 'alerts@indeed.com',
+      headers: { 'authentication-results': ['mail.contoso.com; spf=pass; dmarc=pass'] },
+      body: 'Apply: https://boards.greenhouse.io/acme/jobs/123',
+    },
+  ]);
+  const ctx = {
+    settings: { source: 'ms365', authservId: 'mail.contoso.com' },
+    env: MS365_ENV,
+  };
+  const jobs = await runIngest(ctx, { createSource: () => fake });
+  assert.equal(jobs.length, 1);
 });
 
 await ta('runIngest logs nothing about DMARC when every message is authenticated', async () => {

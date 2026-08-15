@@ -94,11 +94,19 @@ verdict only from fields carrying it, compared **whole** (`mx.google.com.evil.tl
 and `notmx.google.com` both contain the trusted name and are not it). Since the
 id is provider-specific, each adapter declares its own and
 `registry.trustedAuthservIdFor` resolves it, with the `authservId` setting
-overriding the default. `gmail` declares `mx.google.com`. `ms365` declares `null`:
-Microsoft's published header opens straight into `spf=` with no authserv-id, so
-the gate reads the single field that carries none and fails closed when there is
-more than one, because nothing then tells the boundary's own from an injected
-copy.
+overriding the default. `gmail` declares `mx.google.com`.
+
+`ms365` declares `null`, which is the absence of an answer rather than a looser
+rule: Microsoft's published header opens straight into `spf=` with no
+authserv-id, and a field naming no boundary is one any sender can write, since
+section 5 leaves the receiver nothing to strip. Reading it would mean accepting a
+verdict the sender asserted about itself, so the source instead refuses to run
+until the `authservId` setting names the boundary, and the refusal happens
+alongside the env validation, before the mailbox is opened. The alternative,
+reading the mailbox and then failing every message in it, is indistinguishable
+from an empty inbox. `registry.declaredAuthservId` requires the declaration to
+exist, so an adapter that omits or misspells the export fails as the plugin bug
+it is instead of resolving to anything the gate would act on.
 
 Verdicts are parsed, never searched for. Comments in parentheses (which nest) and
 quoted strings are legal syntax carrying free diagnostic text (`reason="..."` is

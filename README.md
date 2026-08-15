@@ -65,6 +65,13 @@ that names the source, every missing key, and where to set it.
 | `gmail` | `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN` |
 | `ms365` | `MSGRAPH_CLIENT_ID`, `MSGRAPH_REFRESH_TOKEN`                    |
 
+`ms365` also needs the `authservId` setting: the name your receiving mail
+boundary puts at the front of the `Authentication-Results` header, which is the
+only field the DMARC gate can attribute a verdict to. Microsoft publishes none
+for Exchange Online, so there is no default and the source refuses to run until
+you set it. See [skill.md](skill.md) for how to read it out of a message you
+already have. `gmail` knows its own and needs no setting.
+
 Optional for either source, never required (the feature degrades when absent):
 
 | Variable            | Enables                                           |

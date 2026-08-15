@@ -36,7 +36,6 @@ function t(name, fn) {
 }
 
 const GOOGLE = { authservId: 'mx.google.com' };
-const UNNAMED = { authservId: null };
 
 // msg builds a message whose Authentication-Results header carries `fields`,
 // one entry per header instance -- the encoding the adapters produce (see
@@ -49,7 +48,7 @@ function msg(...fields) {
 t('passesDmarc refuses to run without an explicit trusted authserv-id', () => {
   assert.throws(() => passesDmarc(msg('mx.google.com; dmarc=pass')), /authserv-id/i);
 });
-t('passesDmarc rejects a non-string, non-null authserv-id', () => {
+t('passesDmarc rejects anything that is not a non-empty authserv-id', () => {
   // Array.prototype.filter passes (element, index, array): a bare
   // `messages.filter(passesDmarc)` would hand the index in as the options
   // argument. That must fail loudly rather than degrade into some default.
@@ -58,6 +57,21 @@ t('passesDmarc rejects a non-string, non-null authserv-id', () => {
     () => passesDmarc(msg('mx.google.com; dmarc=pass'), { authservId: '' }),
     /authserv-id/i,
   );
+  assert.throws(
+    () => passesDmarc(msg('mx.google.com; dmarc=pass'), { authservId: '   ' }),
+    /authserv-id/i,
+  );
+});
+t('null is not a trusted mode: an unnamed field is not attributable to anyone', () => {
+  // A field carrying no authserv-id is one any sender can write, and RFC 7601
+  // section 5 gives the receiver nothing to strip, so no copy of it can be
+  // attributed to the boundary. There is no message the gate could read under
+  // it, so it refuses the option rather than reading one anyway.
+  assert.throws(
+    () => passesDmarc(msg('spf=pass; dmarc=pass'), { authservId: null }),
+    /authserv-id/i,
+  );
+  assert.throws(() => passesDmarc(msg('dmarc=pass'), { authservId: null }), /authserv-id/i);
 });
 
 // -- a genuine receiver-issued pass is still accepted ----------------------
@@ -247,36 +261,38 @@ t('a continuation-shaped instance cannot borrow the boundary field authserv-id',
   assert.equal(passesDmarc(msg('mx.google.com; dmarc=fail', ' ; dmarc=pass'), GOOGLE), false);
 });
 
-// -- a boundary that stamps no authserv-id (authservId: null) --------------
-t('the single unnamed field is the boundary when none is configured', () => {
-  assert.equal(passesDmarc(msg('spf=pass; dkim=pass; dmarc=pass'), UNNAMED), true);
-  assert.equal(passesDmarc(msg('spf=pass; dkim=pass; dmarc=fail'), UNNAMED), false);
+// -- a field carrying no authserv-id speaks for no boundary ----------------
+const CONTOSO = { authservId: 'mail.contoso.com' };
+
+t('a field with no authserv-id is never read as the configured boundary', () => {
+  // RFC 7601 section 5 gives a receiver nothing to strip when a field carries no
+  // id, so no copy of one can be attributed to it. Position does not change
+  // that, in either direction.
+  assert.equal(passesDmarc(msg('spf=pass; dkim=pass; dmarc=pass'), CONTOSO), false);
+  assert.equal(
+    passesDmarc(msg('spf=pass; dmarc=pass', 'mail.contoso.com; dmarc=fail'), CONTOSO),
+    false,
+  );
+  assert.equal(
+    passesDmarc(msg('mail.contoso.com; dmarc=pass', 'spf=fail; dmarc=fail'), CONTOSO),
+    true,
+  );
 });
-t('an unnamed boundary field is read past a named copy, not shadowed by it', () => {
-  assert.equal(passesDmarc(msg('spf=pass; dmarc=pass', 'evil.tld; dmarc=fail'), UNNAMED), true);
-  assert.equal(passesDmarc(msg('evil.tld; dmarc=pass', 'spf=pass; dmarc=fail'), UNNAMED), false);
-});
-t('two unnamed fields are ambiguous and fail closed', () => {
-  // Nothing distinguishes the boundary's own field from an injected copy that
-  // also omits an authserv-id, so neither is trusted.
-  assert.equal(passesDmarc(msg('spf=fail; dmarc=fail', 'spf=pass; dmarc=pass'), UNNAMED), false);
-  assert.equal(passesDmarc(msg('spf=pass; dmarc=pass', 'spf=pass; dmarc=pass'), UNNAMED), false);
-});
-t('with no unnamed field present, a named one is not promoted', () => {
-  assert.equal(passesDmarc(msg('evil.tld; dmarc=pass'), UNNAMED), false);
-});
-t('an unnamed boundary field is parsed the same way', () => {
-  assert.equal(passesDmarc(msg('spf=fail (dmarc=pass); dmarc=fail'), UNNAMED), false);
-  assert.equal(passesDmarc(msg('dmarc=passfoo'), UNNAMED), false);
-  assert.equal(passesDmarc(msg('dmarc = pass'), UNNAMED), true);
+t('the boundary field is parsed the same way whatever id it carries', () => {
+  assert.equal(
+    passesDmarc(msg('mail.contoso.com; spf=fail (dmarc=pass); dmarc=fail'), CONTOSO),
+    false,
+  );
+  assert.equal(passesDmarc(msg('mail.contoso.com; dmarc=passfoo'), CONTOSO), false);
+  assert.equal(passesDmarc(msg('mail.contoso.com; dmarc = pass'), CONTOSO), true);
   assert.equal(
     passesDmarc(
       msg(
-        'spf=pass (sender IP is 1.2.3.4) smtp.mailfrom=acme.com; dkim=pass ' +
-          '(signature was verified) header.d=acme.com;dmarc=pass action=none ' +
+        'mail.contoso.com; spf=pass (sender IP is 1.2.3.4) smtp.mailfrom=acme.com; ' +
+          'dkim=pass (signature was verified) header.d=acme.com;dmarc=pass action=none ' +
           'header.from=acme.com;compauth=pass reason=100',
       ),
-      UNNAMED,
+      CONTOSO,
     ),
     true,
   );

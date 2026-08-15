@@ -18,9 +18,11 @@ import assert from 'node:assert/strict';
 import { create, requiredEnv, trustedAuthservId } from '../lib/sources/ms365.mjs';
 import { passesDmarc } from '../lib/dmarc.mjs';
 
-// The gate options this adapter's own declaration produces, so these tests
-// exercise the real default rather than a literal restated here.
-const DEFAULT_GATE = { authservId: trustedAuthservId };
+// The adapter declares no default authserv-id, so every gate call here names the
+// boundary the tenant configured, exactly as the registry would resolve it from
+// the `authservId` setting.
+const TENANT_BOUNDARY = 'mail.contoso.com';
+const TENANT_GATE = { authservId: TENANT_BOUNDARY };
 
 let pass = 0;
 let fail = 0;
@@ -122,7 +124,10 @@ function getFixture(
   const internetMessageHeaders = headers ?? [
     { name: 'Received', value: 'from mx.indeed.com by outlook.com' },
     { name: 'MIME-Version', value: '1.0' },
-    { name: 'Authentication-Results', value: `spf=pass; dkim=pass; dmarc=${dmarc}` },
+    {
+      name: 'Authentication-Results',
+      value: `${TENANT_BOUNDARY}; spf=pass; dkim=pass; dmarc=${dmarc}`,
+    },
     { name: 'Subject', value: subject },
   ];
   const json = {
@@ -342,7 +347,9 @@ await ta('maps a message to { id, subject, from, headers-as-object, body }', asy
   // with one array of instance values under each name.
   assert.equal(Array.isArray(rec.headers), false);
   assert.equal(typeof rec.headers, 'object');
-  assert.deepEqual(rec.headers['Authentication-Results'], ['spf=pass; dkim=pass; dmarc=pass']);
+  assert.deepEqual(rec.headers['Authentication-Results'], [
+    `${TENANT_BOUNDARY}; spf=pass; dkim=pass; dmarc=pass`,
+  ]);
   assert.match(rec.body, /https:\/\/boards\.greenhouse\.io\/acme\/jobs\/m1/);
 });
 
@@ -369,16 +376,21 @@ await ta('the mapped headers object satisfies the real DMARC gate', async () => 
   });
   const recs = await create(ctx).listMessages(14);
   const byId = Object.fromEntries(recs.map((r) => [r.id, r]));
-  assert.equal(passesDmarc(byId.pass1, DEFAULT_GATE), true, 'dmarc=pass survives into headers');
-  assert.equal(passesDmarc(byId.fail1, DEFAULT_GATE), false, 'dmarc=fail is rejected by the gate');
+  assert.equal(passesDmarc(byId.pass1, TENANT_GATE), true, 'dmarc=pass survives into headers');
+  assert.equal(passesDmarc(byId.fail1, TENANT_GATE), false, 'dmarc=fail is rejected by the gate');
 });
 
-await ta('the adapter declares no authserv-id, because Microsoft publishes none', async () => {
-  // The documented Exchange Online header opens straight into `spf=`, with no
-  // authserv-id ahead of it, so there is no name to match on by default. A
-  // tenant whose boundary does stamp one sets the `authservId` setting.
-  assert.equal(trustedAuthservId, null);
-});
+await ta(
+  'the adapter declares no default authserv-id, because Microsoft publishes none',
+  async () => {
+    // The documented Exchange Online header opens straight into `spf=`, with no
+    // authserv-id ahead of it, so there is no name to match on. Null is the
+    // absence of an answer, not a looser rule: the tenant names its own boundary
+    // through the `authservId` setting, and until it does the registry refuses to
+    // hand the gate anything.
+    assert.equal(trustedAuthservId, null);
+  },
+);
 
 await ta('repeated Authentication-Results all survive the mapping', async () => {
   // Graph returns the full RFC 5322 header set, in which a name may repeat: the
@@ -416,14 +428,20 @@ await ta('the configured boundary field decides, whatever a repeat claims', asyn
   assert.equal(passesDmarc(boundaryPasses, gate), true, 'a repeat cannot suppress a pass');
 });
 
-await ta('two unnamed Authentication-Results are ambiguous and fail closed', async () => {
-  // With no authserv-id to match on, nothing separates the boundary's own field
-  // from a second copy that also omits one, so the gate refuses to guess.
-  const rec = await readHeaders([
-    { name: 'Authentication-Results', value: 'spf=fail; dkim=fail; dmarc=fail' },
+await ta('a field carrying no authserv-id is not read as the tenant boundary', async () => {
+  // Exchange Online's documented header shape. It names no boundary, and a field
+  // that names none is one any sender can write, so it decides nothing here: the
+  // configured boundary's own field is the only one read.
+  const noneNamed = await readHeaders([
     { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' },
   ]);
-  assert.equal(passesDmarc(rec, DEFAULT_GATE), false);
+  assert.equal(passesDmarc(noneNamed, TENANT_GATE), false);
+
+  const alongsideBoundary = await readHeaders([
+    { name: 'Authentication-Results', value: 'spf=pass; dkim=pass; dmarc=pass' },
+    { name: 'Authentication-Results', value: `${TENANT_BOUNDARY}; dmarc=fail` },
+  ]);
+  assert.equal(passesDmarc(alongsideBoundary, TENANT_GATE), false);
 });
 
 await ta('a message with no internetMessageHeaders fails the DMARC gate closed', async () => {
@@ -436,7 +454,7 @@ await ta('a message with no internetMessageHeaders fails the DMARC gate closed',
   });
   const [rec] = await create(ctx).listMessages(14);
   assert.deepEqual(rec.headers, {}, 'headers is an empty map, never undefined');
-  assert.equal(passesDmarc(rec, DEFAULT_GATE), false);
+  assert.equal(passesDmarc(rec, TENANT_GATE), false);
 });
 
 // -- pagination -----------------------------------------------------------
