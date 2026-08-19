@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 import { resolveNetwork, candidateSlugs, buildSearchUrl } from '../lib/resolve-network.mjs';
+import { IDENTITY_CORPUS, KNOWN_WRONG, liveVerdict } from './identity-corpus.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -2544,6 +2545,66 @@ await ta('live: real Tavily round-trip (skipped without RUN_LIVE_TAVILY)', async
   assert.notEqual(lead.url, TRACKER);
   assert.doesNotThrow(() => new URL(lead.url));
   console.log(`  live Tavily ok: resolvedVia=${lead.resolvedVia} url=${lead.url}`);
+});
+
+// -- the shared identity corpus -------------------------------------------
+// Every row is driven through the REAL resolveNetwork. Tier 1 is 404 for each,
+// so resolution reaches Tier 2, and the scripted Tavily result is built so that
+// every NON-identity gate passes: the title is the lead's title verbatim, the
+// host is a real ATS host, the posting shape is well formed, and the score is
+// high. Identity is therefore the only gate left that can decide the outcome.
+//
+// That construction is the point. A fixture whose company is unrelated to the
+// lead's -- the shape this file used to rely on -- is rejected by corroboration
+// whether or not the identity gate runs at all, so it cannot tell the two apart.
+//
+// Rows carrying `knownWrong` assert the behaviour on main TODAY, which
+// contradicts the row's own verdict. They are pinned, not excused: changing the
+// gate at all fails them, which is exactly when someone should be looking.
+
+function corpusCtx(row) {
+  return makeCtx({
+    env: TAVILY_ENV,
+    routes: {
+      [TAVILY_KEY]: tavilyResponse([
+        {
+          title: `Job Application for VP Marketing at ${row.company}`,
+          url: row.boardUrl,
+          content: `${row.company} is hiring a VP Marketing.`,
+          score: 0.94,
+          raw_content: null,
+        },
+      ]),
+    },
+  });
+}
+
+function corpusLead(row) {
+  return { ...tier2Lead(), company: row.company };
+}
+
+for (const row of IDENTITY_CORPUS) {
+  const want = liveVerdict(row);
+  const label = row.knownWrong ? `${row.name} [KNOWN WRONG, #${row.knownWrong}]` : row.name;
+  await ta(`identity corpus: ${label}`, async () => {
+    const [lead] = await resolveNetwork(corpusCtx(row), [corpusLead(row)]);
+    if (want === 'accept') {
+      assert.equal(lead.url, row.boardUrl, `should have emitted the board url. ${row.why}`);
+    } else {
+      assert.equal(
+        lead.url,
+        buildSearchUrl('VP Marketing', row.company),
+        `should have fallen back to search rather than emit ${row.boardUrl}. ${row.why}`,
+      );
+    }
+  });
+}
+
+t('the corpus records the identity gap rather than hiding it', () => {
+  // A guard on the guard: if someone silences a row by deleting it instead of
+  // fixing the gate, this count moves and says so.
+  assert.equal(KNOWN_WRONG.length, 8, 'known-wrong rows still open against #29');
+  assert.equal(IDENTITY_CORPUS.length, 10, 'corpus size');
 });
 
 console.log(`resolve-network.test: ${pass} passed, ${fail} failed`);
