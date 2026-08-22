@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.1...v0.1.2) (2026-08-20)
+
+
+### Features
+
+* **resolve-network:** emit an employer-hosted posting as canonical ([#23](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/23)) ([325a06f](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/325a06fb54a5a5fb16f6a4a93213535c22797987))
+
+
+### Bug Fixes
+
+* **resolve-network:** read the Tier-2 tenant relation off the whole company name ([#30](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/30)) ([cc50e47](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/cc50e477ab9390751f673e3aee09e0b5e49d9215))
+
 ## [0.1.1](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.0...v0.1.1) (2026-08-15)
 
 
