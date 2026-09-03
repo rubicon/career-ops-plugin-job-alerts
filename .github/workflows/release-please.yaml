@@ -41,7 +41,7 @@ jobs:
           private-key: ${{ steps.op.outputs.RELEASE_PLEASE_APP_KEY }}
 
       - name: Run release-please
-        uses: googleapis/release-please-action@5792afc6b46e9bb55deda9eda973a18c226bc3fc # v4.1.5
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
