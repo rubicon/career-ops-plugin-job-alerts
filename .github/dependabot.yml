@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Keep the commitlint packages together. @commitlint/cli and
+      # @commitlint/config-conventional move as a pair, and upgrading one
+      # without the other breaks the commit-lint gate.
+      commitlint:
+        patterns:
+          - '@commitlint/*'
+      # Batch routine dev-dependency bumps into a single PR. Majors are
+      # excluded on purpose, so they still arrive individually and can be
+      # held and tested on their own.
+      dev-dependencies:
+        dependency-type: 'development'
+        update-types:
+          - 'minor'
+          - 'patch'
+
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Same split for actions: safe bumps batch together, majors stay
+      # separate so one risky runner upgrade cannot block the rest.
+      actions-minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
