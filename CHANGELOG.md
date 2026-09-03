@@ -5,6 +5,13 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.2...v0.1.3) (2026-09-03)
+
+
+### Bug Fixes
+
+* **ci:** pin create-github-app-token to v3.2.0 so client-id works ([#39](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/39)) ([b81f0fe](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/b81f0feaf6c4d2e289b5b8c4dad1c5cb416b1f0d)), closes [#38](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/38)
+
 ## [0.1.2](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.1...v0.1.2) (2026-08-20)
 
 
