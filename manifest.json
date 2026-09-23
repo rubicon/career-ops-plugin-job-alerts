@@ -1,7 +1,7 @@
 {
   "id": "job-alerts",
   "name": "career-ops-plugin-job-alerts",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "apiVersion": 1,
   "description": "Multi-board job-alert email ingest from Gmail or Microsoft 365. Verifies sender authenticity (DMARC), extracts roles, and resolves tracking links to canonical job URLs (ATS and search).",
   "hooks": [
