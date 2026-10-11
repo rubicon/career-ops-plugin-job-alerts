@@ -39,6 +39,12 @@ jobs:
         with:
           client-id: ${{ steps.op.outputs.RELEASE_PLEASE_CLIENT_ID }}
           private-key: ${{ steps.op.outputs.RELEASE_PLEASE_APP_KEY }}
+          # Without these the token carries every permission the App installation
+          # holds. release-please needs commit and tag (contents), and open and
+          # update the release PR (pull-requests). Deliberately not permission-issues:
+          # the App does not grant it, and the request fails if a scope exceeds the grant.
+          permission-contents: write
+          permission-pull-requests: write
 
       - name: Run release-please
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
