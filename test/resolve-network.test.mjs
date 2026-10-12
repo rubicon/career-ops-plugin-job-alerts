@@ -1143,6 +1143,232 @@ await ta(
   },
 );
 
+// -- Tier 1: a first-word board needs the response to say it is this employer (#57) --
+//
+// candidateSlugs offers the company's first word as a PROBE guess, and a title match on
+// that board used to be the whole of the evidence. "nimbus" is Nimbus AI's board as
+// readily as Nimbus Data's, so a first-word hit is emitted only when the provider's own
+// response corroborates it: Greenhouse's board `name` (GET /v1/boards/{token}, "your
+// organization's name"), or, for Lever and Ashby, which document no company field, the
+// posting's own `descriptionPlain` naming the company in full. The joined and hyphenated
+// slugs are the company's full name and need nothing more. Every case drives the real
+// resolveNetwork with a fake ctx.fetchJson.
+
+const NIMBUS_GH_JOBS = 'https://boards-api.greenhouse.io/v1/boards/nimbus/jobs';
+const NIMBUS_GH_BOARD = 'https://boards-api.greenhouse.io/v1/boards/nimbus';
+
+// The fake matches routes by substring, in insertion order, so "postings/nimbus" would
+// also answer the probe for the full-name slug "nimbusdata" and the test would not be
+// exercising the first-word path at all. These two entries come first and 404 the
+// full-name slugs, leaving "nimbus" as the only board that exists.
+function onlyFirstWordBoard(routes) {
+  return { '/nimbusdata': { status: 404 }, '/nimbus-data': { status: 404 }, ...routes };
+}
+
+function nimbusGreenhouseJobs() {
+  return {
+    json: {
+      jobs: [
+        {
+          id: 1,
+          title: 'VP Marketing',
+          absolute_url: 'https://boards.greenhouse.io/nimbus/jobs/1',
+          location: { name: 'Austin, TX' },
+        },
+      ],
+      meta: { total: 1 },
+    },
+  };
+}
+
+// The jobs key is listed first: the fake matches by substring in insertion order, and
+// the board URL is a prefix of the jobs URL.
+function nimbusGreenhouseCtx(boardName) {
+  const routes = { [NIMBUS_GH_JOBS]: nimbusGreenhouseJobs() };
+  if (boardName !== undefined) routes[NIMBUS_GH_BOARD] = { json: { name: boardName, content: '' } };
+  return makeCtx({ routes: onlyFirstWordBoard(routes) });
+}
+
+function nimbusLead() {
+  return {
+    title: 'VP Marketing',
+    url: TRACKER,
+    company: 'Nimbus Data',
+    location: '',
+    canonical: false,
+    status: 'needs-canonical',
+  };
+}
+
+async function assertFellBack(ctx, label) {
+  const [lead] = await resolveNetwork(ctx, [nimbusLead()]);
+  assert.equal(lead.resolvedVia, 'search-fallback', label);
+  assert.equal(lead.canonical, false, label);
+  assert.equal(lead.status, 'needs-canonical', label);
+  assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Nimbus Data'), label);
+}
+
+await ta('Tier-1: a first-word Greenhouse board with no board name is not emitted', async () => {
+  // The #57 reproduction exactly: the board answers the jobs probe and nothing else.
+  await assertFellBack(nimbusGreenhouseCtx(undefined), 'no board name');
+});
+
+await ta(
+  'Tier-1: a first-word Greenhouse board named for another company is rejected',
+  async () => {
+    for (const name of ['Nimbus AI', 'Nimbus Labs', 'Nimbus Data Systems']) {
+      await assertFellBack(nimbusGreenhouseCtx(name), name);
+    }
+  },
+);
+
+await ta(
+  'Tier-1: a first-word Greenhouse board whose name fits the company is emitted',
+  async () => {
+    // The brand name alone ("Nimbus") and the full name both fit: neither adds a word the
+    // company's own name lacks. What the response CANNOT show is that a board named exactly
+    // "Nimbus" is this employer and not another one; that residual is the price of keeping
+    // recall for a company that boards under its first word.
+    for (const name of ['Nimbus Data', 'Nimbus Data, Inc.', 'Nimbus']) {
+      const [lead] = await resolveNetwork(nimbusGreenhouseCtx(name), [nimbusLead()]);
+      assert.equal(lead.url, 'https://boards.greenhouse.io/nimbus/jobs/1', name);
+      assert.equal(lead.resolvedVia, 'ats', name);
+      assert.equal(lead.canonical, true, name);
+      assert.equal(lead.location, 'Austin, TX', name);
+    }
+  },
+);
+
+await ta('Tier-1: the full-name slug needs no corroboration', async () => {
+  // "nimbusdata" IS the company's name, so a title match on it stands on its own, as it
+  // always has. No board-name route exists here.
+  const ctx = makeCtx({
+    routes: {
+      'boards-api.greenhouse.io/v1/boards/nimbusdata/jobs': {
+        json: {
+          jobs: [
+            {
+              id: 2,
+              title: 'VP Marketing',
+              absolute_url: 'https://boards.greenhouse.io/nimbusdata/jobs/2',
+              location: { name: 'Remote' },
+            },
+          ],
+          meta: { total: 1 },
+        },
+      },
+    },
+  });
+  const [lead] = await resolveNetwork(ctx, [nimbusLead()]);
+  assert.equal(lead.url, 'https://boards.greenhouse.io/nimbusdata/jobs/2');
+  assert.equal(lead.resolvedVia, 'ats');
+});
+
+await ta('Tier-1: a first-word Lever posting must name the company in full', async () => {
+  const lever = (descriptionPlain) => ({
+    json: [
+      {
+        id: 'n1',
+        text: 'VP Marketing',
+        hostedUrl: 'https://jobs.lever.co/nimbus/n1',
+        categories: { location: 'Austin, TX' },
+        ...(descriptionPlain === undefined ? {} : { descriptionPlain }),
+      },
+    ],
+  });
+  const run = (descriptionPlain) =>
+    makeCtx({
+      routes: onlyFirstWordBoard({ 'api.lever.co/v0/postings/nimbus': lever(descriptionPlain) }),
+    });
+
+  for (const text of [
+    undefined,
+    'Nimbus AI, a data infrastructure company, is hiring a VP Marketing.',
+    'Join the team. We build tools for people who run data.',
+  ]) {
+    await assertFellBack(run(text), String(text));
+  }
+
+  const [lead] = await resolveNetwork(
+    run('Nimbus Data is a data infrastructure company hiring a VP Marketing to lead brand.'),
+    [nimbusLead()],
+  );
+  assert.equal(lead.url, 'https://jobs.lever.co/nimbus/n1');
+  assert.equal(lead.resolvedVia, 'ats');
+});
+
+await ta('Tier-1: a first-word Ashby posting must name the company in full', async () => {
+  const ashby = (descriptionPlain) => ({
+    json: {
+      apiVersion: '1',
+      jobs: [
+        {
+          title: 'VP Marketing',
+          location: 'Austin, TX',
+          jobUrl: 'https://jobs.ashbyhq.com/nimbus/aaaa-bbbb',
+          isListed: true,
+          ...(descriptionPlain === undefined ? {} : { descriptionPlain }),
+        },
+      ],
+    },
+  });
+  const run = (descriptionPlain) =>
+    makeCtx({
+      routes: onlyFirstWordBoard({
+        'api.ashbyhq.com/posting-api/job-board/nimbus': ashby(descriptionPlain),
+      }),
+    });
+
+  for (const text of [undefined, 'Nimbus AI is hiring a VP Marketing.']) {
+    await assertFellBack(run(text), String(text));
+  }
+
+  const [lead] = await resolveNetwork(
+    run('About Nimbus Data: we are hiring a VP Marketing to lead brand.'),
+    [nimbusLead()],
+  );
+  assert.equal(lead.url, 'https://jobs.ashbyhq.com/nimbus/aaaa-bbbb');
+  assert.equal(lead.resolvedVia, 'ats');
+});
+
+await ta(
+  'Tier-1: a rejected first-word board does not hide the right one on another ATS',
+  async () => {
+    // Greenhouse's "nimbus" is Nimbus AI's board; Lever's "nimbus" names Nimbus Data in its
+    // own posting. The first ATS failing corroboration is a miss for that ATS only.
+    const ctx = makeCtx({
+      routes: onlyFirstWordBoard({
+        [NIMBUS_GH_JOBS]: nimbusGreenhouseJobs(),
+        [NIMBUS_GH_BOARD]: { json: { name: 'Nimbus AI', content: '' } },
+        'api.lever.co/v0/postings/nimbus': {
+          json: [
+            {
+              id: 'n1',
+              text: 'VP Marketing',
+              hostedUrl: 'https://jobs.lever.co/nimbus/n1',
+              categories: { location: 'Austin, TX' },
+              descriptionPlain: 'Nimbus Data is hiring a VP Marketing.',
+            },
+          ],
+        },
+      }),
+    });
+    const [lead] = await resolveNetwork(ctx, [nimbusLead()]);
+    assert.equal(lead.url, 'https://jobs.lever.co/nimbus/n1');
+    assert.equal(lead.resolvedVia, 'ats');
+  },
+);
+
+await ta('Tier-1: a one-word company is unaffected', async () => {
+  // Its first word IS its full name, so no slug is a guess. No board-name route exists.
+  const ctx = makeCtx({ routes: { [GH_KEY]: greenhouseBoard() } });
+  const [lead] = await resolveNetwork(ctx, [
+    { title: 'VP Marketing', url: TRACKER, company: 'Acme', canonical: false },
+  ]);
+  assert.equal(lead.url, 'https://boards.greenhouse.io/acme/jobs/4007');
+  assert.equal(lead.resolvedVia, 'ats');
+});
+
 // -- a tenant token that stops at a word boundary is a different company (#29) --
 //
 // The token-inside-the-name direction of gate 2 accepts a LEADING ABBREVIATION of the
