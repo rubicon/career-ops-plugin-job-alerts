@@ -5,14 +5,14 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.3](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.2...v0.1.3) (2026-09-23)
+## [0.1.3] - 2026-09-23
 
 
 ### Bug Fixes
 
 * **ci:** pin create-github-app-token to v3.2.0 so client-id works ([#39](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/39)) ([b81f0fe](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/b81f0feaf6c4d2e289b5b8c4dad1c5cb416b1f0d)), closes [#38](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/38)
 
-## [0.1.2](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.1...v0.1.2) (2026-08-20)
+## [0.1.2] - 2026-08-20
 
 
 ### Features
@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 * **resolve-network:** read the Tier-2 tenant relation off the whole company name ([#30](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/30)) ([cc50e47](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/cc50e477ab9390751f673e3aee09e0b5e49d9215))
 
-## [0.1.1](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.0...v0.1.1) (2026-08-15)
+## [0.1.1] - 2026-08-15
 
 
 ### Features
@@ -38,27 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **ci:** address the release-please 1Password item by UUID ([#15](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/15)) ([c188ab9](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/c188ab94e5f37a0bd5da50d4260d8d8532de65e0)), closes [#14](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/14)
 * **release:** drop the release-as pin so versions can advance ([#26](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/26)) ([5da2b64](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/5da2b6425ed6f7be2ad50103cc2ec152a5c06bd6)), closes [#25](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/25)
 
-## [0.1.0](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.0...v0.1.0) (2026-08-15)
-
-
-### Features
-
-* **ms365:** implement the Microsoft Graph MailSource adapter ([#19](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/19)) ([0a72d06](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/0a72d06c7b15e38b1a766db801da242b64e8b963))
-* **resolve-network:** add tier-2 Tavily canonical resolution ([#20](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/20)) ([5caeaef](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/5caeaef01e23a26d35c2a2102b735beda2495903))
-
-
-### Bug Fixes
-
-* **ci:** address the release-please 1Password item by UUID ([#15](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/15)) ([c188ab9](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/c188ab94e5f37a0bd5da50d4260d8d8532de65e0)), closes [#14](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/14)
-
-## [0.1.0](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.0...v0.1.0) (2026-08-03)
-
-
-### Bug Fixes
-
-* **ci:** address the release-please 1Password item by UUID ([#15](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/15)) ([c188ab9](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/c188ab94e5f37a0bd5da50d4260d8d8532de65e0)), closes [#14](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/14)
-
-## 0.1.0 (2026-07-21)
+## [0.1.0] - 2026-07-21
 
 
 ### Features
@@ -67,8 +47,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * **gmail:** implement OAuth-REST MailSource adapter ([#7](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/7)) ([f9387f5](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/f9387f51e9976671a2c50d51a6e1b75c2024443a))
 * **resolve-canonical:** tier-1 ATS resolution and never-dead-link contract ([#9](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/9)) ([9b45f99](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/9b45f995b52dab2d855dbb0b3bac1d7fc62844f1)), closes [#8](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/8)
 * source-adapter seam and source-agnostic core skeleton ([#3](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/3)) ([f23c317](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/f23c3176bb45c3012c0078233d99711954bb6643)), closes [#2](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/2)
-
-## [Unreleased]
 
 ### Added
 
@@ -83,4 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release automation (release-please), CI (smoke, format, and commitlint checks),
   and the standard repository documentation set.
 
-[Unreleased]: https://github.com/rubicon/career-ops-plugin-job-alerts/commits/main
+[Unreleased]: https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.2...v0.1.3
+[0.1.2]: https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/rubicon/career-ops-plugin-job-alerts/releases/tag/v0.1.0
