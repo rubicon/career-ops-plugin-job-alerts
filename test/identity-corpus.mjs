@@ -2,7 +2,7 @@
 //
 // One table, consumed by resolve-network.test.mjs. Every row is a real shape the
 // resolver can meet, and every row records BOTH what the resolver should do and
-// what it does today, because those disagree on seven of them.
+// what it does today, because those can disagree.
 //
 // Why a table rather than cases written inline: the wrong-employer defect has
 // been fixed twice, in two directions, with two different rules (#23 for
@@ -34,6 +34,30 @@ export const IDENTITY_CORPUS = [
     verdict: 'accept',
     why: 'A leading abbreviation of the whole name is how companies actually name boards.',
   },
+  {
+    name: 'a leading abbreviation spanning words, ending inside the last one',
+    company: 'Northstar Health Systems',
+    slug: 'northstarhealthsys',
+    boardUrl: 'https://jobs.lever.co/northstarhealthsys/abc-123',
+    verdict: 'accept',
+    why: 'It starts the name and stops inside a word, so it abbreviates this name and no shorter one.',
+  },
+  {
+    name: 'the whole joined name of a multi-word company',
+    company: 'Nimbus Data',
+    slug: 'nimbusdata',
+    boardUrl: 'https://boards.greenhouse.io/nimbusdata/jobs/1301',
+    verdict: 'accept',
+    why: 'The full name ends at a word boundary by definition and is the company itself.',
+  },
+  {
+    name: 'the whole hyphenated name of a multi-word company',
+    company: 'Nimbus Data',
+    slug: 'nimbus-data',
+    boardUrl: 'https://boards.greenhouse.io/nimbus-data/jobs/1301',
+    verdict: 'accept',
+    why: 'The hyphenated spelling of the full name.',
+  },
 
   // ---- rejects: a different employer, reached through the company name --------
   {
@@ -42,7 +66,6 @@ export const IDENTITY_CORPUS = [
     slug: 'systems',
     boardUrl: 'https://boards.greenhouse.io/systems/jobs/4001',
     verdict: 'reject',
-    knownWrong: 29,
     why: '"northstarhealthsystems".includes("systems"). A common noun is not an identity.',
   },
   {
@@ -51,7 +74,6 @@ export const IDENTITY_CORPUS = [
     slug: 'data',
     boardUrl: 'https://boards.greenhouse.io/data/jobs/9001',
     verdict: 'reject',
-    knownWrong: 29,
     why: '"nimbusdata".includes("data").',
   },
   {
@@ -60,7 +82,6 @@ export const IDENTITY_CORPUS = [
     slug: 'platforms',
     boardUrl: 'https://jobs.lever.co/platforms/abc-123',
     verdict: 'reject',
-    knownWrong: 29,
     why: '"metaplatforms".includes("platforms").',
   },
   {
@@ -69,7 +90,6 @@ export const IDENTITY_CORPUS = [
     slug: 'starhealth',
     boardUrl: 'https://boards.greenhouse.io/starhealth/jobs/7001',
     verdict: 'reject',
-    knownWrong: 29,
     why: '"northstarhealthsystems".includes("starhealth") across the north|star|health seam.',
   },
   {
@@ -78,7 +98,6 @@ export const IDENTITY_CORPUS = [
     slug: 'nimbus',
     boardUrl: 'https://boards.greenhouse.io/nimbus/jobs/1201',
     verdict: 'reject',
-    knownWrong: 29,
     why: 'The prefix ends at a word boundary, so it names a different company.',
   },
   {
@@ -87,7 +106,7 @@ export const IDENTITY_CORPUS = [
     slug: 'novacreditunion',
     boardUrl: 'https://jobs.lever.co/novacreditunion/xyz789',
     verdict: 'reject',
-    knownWrong: 29,
+    knownWrong: 54,
     why: 'Direction B. A credit union is not the fintech, and the string cannot tell them apart alone.',
   },
   {
@@ -97,7 +116,6 @@ export const IDENTITY_CORPUS = [
     boardUrl:
       'https://health.wd5.myworkdayjobs.com/en-US/Careers/job/Dallas-TX/VP-Marketing_JR-10423',
     verdict: 'reject',
-    knownWrong: 29,
     why: 'Workday and iCIMS get NO Tier-1 probe, so gate 2 is their only identity test and it is the loosest one.',
   },
   {
@@ -106,7 +124,6 @@ export const IDENTITY_CORPUS = [
     slug: 'careers-nimbus',
     boardUrl: 'https://careers-nimbus.icims.com/jobs/44120/vp-marketing/job',
     verdict: 'reject',
-    knownWrong: 29,
     why: 'The strip is correct; what it leaves behind is a prefix ending at a word boundary.',
   },
   {
