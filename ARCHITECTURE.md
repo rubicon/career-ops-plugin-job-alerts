@@ -163,7 +163,14 @@ The network resolution tiers are I/O and live in `resolve-network.mjs`:
 
 - **Tier 1** probes the public Greenhouse, Lever, and Ashby board APIs with slugs
   guessed from the company name, and takes the posting whose title uniquely clears
-  a symmetric Jaccard threshold.
+  a symmetric Jaccard threshold. A board reached through the full-name slugs
+  (`nimbusdata`, `nimbus-data`) stands on the title match. A board reached only
+  through the company's first word (`nimbus`) is another employer's as readily as
+  this one's, so it is emitted only when the provider's response corroborates it:
+  Greenhouse's board `name` must add no word the company's name lacks, and a Lever or
+  Ashby posting (neither documents a company field) must name the company in full in
+  its `descriptionPlain`. A board that cannot show that is a miss and the lead falls
+  through to Tier 2.
 - **Tier 2** runs only for a lead Tier 1 missed, and only when `TAVILY_API_KEY` is
   set. It POSTs to the Tavily Search API and accepts a result only when every gate
   below holds. Tavily's own `score` is not a gate, because the API docs define
