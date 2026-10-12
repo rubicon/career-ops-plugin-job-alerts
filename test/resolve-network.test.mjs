@@ -1143,50 +1143,98 @@ await ta(
   },
 );
 
+// -- a tenant token that stops at a word boundary is a different company (#29) --
+//
+// The token-inside-the-name direction of gate 2 accepts a LEADING ABBREVIATION of the
+// company's joined name -- a prefix that ends inside a word ("acmetech" for "Acme
+// Technologies") -- and the whole name itself. It does not accept a prefix that ends
+// where a word does: "nimbus" for "Nimbus Data" is another company's complete name, and
+// "northstarhealth" for "Northstar Health Systems" is too. Nor does it accept a
+// substring that does not start the name at all ("data", "systems", "starhealth"),
+// which is a common noun or a straddled seam rather than an abbreviation of anything.
+// All of these drive the real resolveNetwork with a scripted Tavily result.
+
+async function resolvedUrl(company, url) {
+  const row = { company, boardUrl: url };
+  const [lead] = await resolveNetwork(corpusCtx(row), [corpusLead(row)]);
+  return lead;
+}
+
 await ta(
-  'Tier-2: a tenant token that stops at a word boundary of the company name is STILL accepted',
+  'Tier-2: a tenant token that stops at a word boundary of the company name is rejected',
   async () => {
-    // The residual this fix does not close, pinned so it is a decision on the record
-    // and not an assumption. "nimbus" sits inside "nimbusdata", so the
-    // token-inside-the-name direction accepts it even when it is Nimbus AI's board --
-    // and "careers-nimbus" reduces to that same token, so the furniture strip inherits
-    // it. Both resolve on origin/main as well; neither is introduced or widened here.
-    //
-    // It is the same family as the truncation #24 removed, seen from the other
-    // direction, and closing it is a separate trade: on a shared board a first-word
-    // slug is what Tier 1 already probes and VERIFIES by fetching the board, while on
-    // a tenant platform there is no probe and rejecting it would lose real postings.
-    // Filed as #29 with this reproduction.
-    //
-    // If #29 closes it, this test SHOULD go red. That is the point of it: the day the
-    // behaviour changes, the change is deliberate and visible rather than silent.
+    // The #29 reproduction: Nimbus AI's board must not be emitted as Nimbus Data's
+    // canonical posting, and the lead stays unconfirmed for an employer check. The
+    // furniture-wrapped form reduces to the same token, so it must fall the same way.
     for (const url of [
       'https://boards.greenhouse.io/nimbus/jobs/7788',
       'https://boards.greenhouse.io/careers-nimbus/jobs/7788',
     ]) {
-      const ctx = makeCtx({
-        env: TAVILY_ENV,
-        routes: {
-          [TAVILY_KEY]: tavilyResponse([
-            {
-              title: 'Job Application for VP Marketing at Nimbus',
-              url,
-              content:
-                'Nimbus is a data infrastructure company hiring a VP Marketing to lead brand.',
-              score: 0.9,
-              raw_content: null,
-            },
-          ]),
-        },
-      });
-      const [lead] = await resolveNetwork(ctx, [
-        { title: 'VP Marketing', url: TRACKER, company: 'Nimbus Data', canonical: false },
-      ]);
-      assert.equal(lead.url, url, url);
-      assert.equal(lead.resolvedVia, 'tavily', url);
+      const lead = await resolvedUrl('Nimbus Data', url);
+      assert.equal(lead.url, buildSearchUrl('VP Marketing', 'Nimbus Data'), url);
+      assert.equal(lead.canonical, false, url);
+      assert.equal(lead.status, 'needs-canonical', url);
+      assert.equal(lead.resolvedVia, 'search-fallback', url);
     }
   },
 );
+
+await ta('Tier-2: the rejection is the class, not the nimbus literal', async () => {
+  // Every case is a token that ends at a word boundary of a multi-word name, or does
+  // not begin the name, on each host family the gate reads: a shared board's path
+  // segment, and a tenant platform's host label.
+  const cases = [
+    ['Northstar Health Systems', 'https://jobs.lever.co/northstar/abc-123'],
+    ['Northstar Health Systems', 'https://jobs.lever.co/northstarhealth/abc-123'],
+    ['Northstar Health Systems', 'https://boards.greenhouse.io/systems/jobs/4001'],
+    ['Northstar Health Systems', 'https://boards.greenhouse.io/starhealth/jobs/7001'],
+    [
+      'Northstar Health Systems',
+      'https://northstarhealth.wd5.myworkdayjobs.com/en-US/Careers/job/Dallas-TX/VP-Marketing_JR-10423',
+    ],
+    ['Nimbus Data', 'https://careers-nimbus.icims.com/jobs/44120/vp-marketing/job'],
+  ];
+  for (const [company, url] of cases) {
+    const lead = await resolvedUrl(company, url);
+    assert.equal(lead.url, buildSearchUrl('VP Marketing', company), `${company} / ${url}`);
+    assert.equal(lead.resolvedVia, 'search-fallback', `${company} / ${url}`);
+  }
+});
+
+await ta('Tier-2: a leading abbreviation that ends inside a word is still accepted', async () => {
+  const cases = [
+    ['Acme Technologies', 'https://jobs.lever.co/acmetech/a1b2c3d4'],
+    ['Northstar Health Systems', 'https://jobs.lever.co/northstarhealthsys/abc-123'],
+    ['Northstar Health Systems', 'https://boards.greenhouse.io/northstarhealthsyst/jobs/7788'],
+    // Furniture is set aside first, then the core is read as any other token.
+    [
+      'Northstar Health Systems',
+      'https://careers-northstarhealthsys.icims.com/jobs/44120/vp-marketing/job',
+    ],
+  ];
+  for (const [company, url] of cases) {
+    const lead = await resolvedUrl(company, url);
+    assert.equal(lead.url, url, `${company} / ${url}`);
+    assert.equal(lead.resolvedVia, 'tavily', `${company} / ${url}`);
+  }
+});
+
+await ta('Tier-2: the full joined name is still accepted, joined or hyphenated', async () => {
+  // A multi-word company whose real board token IS its whole name. The full name ends
+  // at the last word boundary by definition, which is why the boundary test must
+  // exempt it: "nimbusdata" is Nimbus Data, not a shorter company.
+  const cases = [
+    ['Nimbus Data', 'https://boards.greenhouse.io/nimbusdata/jobs/7788'],
+    ['Nimbus Data', 'https://boards.greenhouse.io/nimbus-data/jobs/7788'],
+    ['Northstar Health Systems', 'https://jobs.lever.co/northstarhealthsystems/abc-123'],
+    ['Northstar Health Systems', 'https://jobs.lever.co/northstar-health-systems/abc-123'],
+  ];
+  for (const [company, url] of cases) {
+    const lead = await resolvedUrl(company, url);
+    assert.equal(lead.url, url, `${company} / ${url}`);
+    assert.equal(lead.resolvedVia, 'tavily', `${company} / ${url}`);
+  }
+});
 
 await ta('a company with no token long enough to corroborate never reaches Tavily', async () => {
   // "3M Co" leaves nothing usable: "co" is legal-entity noise and "3m" is too short
@@ -2603,8 +2651,8 @@ for (const row of IDENTITY_CORPUS) {
 t('the corpus records the identity gap rather than hiding it', () => {
   // A guard on the guard: if someone silences a row by deleting it instead of
   // fixing the gate, this count moves and says so.
-  assert.equal(KNOWN_WRONG.length, 8, 'known-wrong rows still open against #29');
-  assert.equal(IDENTITY_CORPUS.length, 10, 'corpus size');
+  assert.equal(KNOWN_WRONG.length, 1, 'known-wrong rows still open against #54');
+  assert.equal(IDENTITY_CORPUS.length, 13, 'corpus size');
 });
 
 console.log(`resolve-network.test: ${pass} passed, ${fail} failed`);

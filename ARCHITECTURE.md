@@ -203,6 +203,12 @@ namespace is exactly what an unrelated registrant of that word holds. A length f
 on the label or a TLD allowlist would be an invented threshold, so that class keeps
 the fallback.
 
+On a vendor host, "relatable to company" means the whole joined name, a leading
+abbreviation of it that ends inside a word (`acmetech` for "Acme Technologies"), or the
+whole name plus a suffix. A token that ends where a word does (`nimbus` for "Nimbus
+Data") or does not start the name (`data`, `systems`) is another company's name, so it
+keeps the fallback and the lead stays unconfirmed for an employer check.
+
 What Tier 2 still declines, deliberately, keeping the search fallback: an employer
 domain whose label is only _similar_ to the company name (`acmetech.com` for "Acme
 Technologies") or only its first word (`acme.tk`), because a relation short of
