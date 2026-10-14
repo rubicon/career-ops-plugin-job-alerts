@@ -5,6 +5,14 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4](https://github.com/rubicon/career-ops-plugin-job-alerts/compare/v0.1.3...v0.1.4) (2026-10-12)
+
+
+### Fixed
+
+* **resolve-network:** corroborate a first-word Tier-1 board before emitting it ([#58](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/58)) ([eb634f0](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/eb634f0772594ad8d91a83bc55ec9d561553cb4d)), closes [#57](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/57)
+* **resolve-network:** reject a tenant token that ends at a word boundary of the company name ([#55](https://github.com/rubicon/career-ops-plugin-job-alerts/issues/55)) ([4602913](https://github.com/rubicon/career-ops-plugin-job-alerts/commit/4602913a462e9e5764880c641afe080875b71767))
+
 ## [0.1.3] - 2026-09-23
 
 
